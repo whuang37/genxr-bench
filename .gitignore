@@ -1,0 +1,36 @@
+# Operating system and editor files
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+contract-inventory.md
+jobs
+
+# Node and TypeScript
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+*.log
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+
+# GenXR local state and generated evaluation output
+.genxr/
+artifacts/
+results/
+logs/
+tmp/
+authoring/.work/
+authoring/**/worktree/
+
+# Local Docker build metadata
+*.local-image.json
+
+# Keep task workspace archives tracked. They are Harbor task inputs.
+!tasks/**/workspace.tar.zst
