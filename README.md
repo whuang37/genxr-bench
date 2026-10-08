@@ -24,11 +24,6 @@
 - An API key for your agent provider and `GEMINI_API_KEY` for the verifier.
   All task configurations reference `GEMINI_API_KEY`.
 
-Node.js, Chromium, FFmpeg, and DevTools are installed in the Docker images.
-You do not need them on the host to run tasks. Internet access is required to
-build the images and call model APIs. A headset is not required for the
-automated simulator tests.
-
 ## Installation
 
 ```bash
@@ -52,9 +47,6 @@ creates `genxr-runtime:local` and `genxr-runtime-app:local`. See
 
 ## Run the benchmark
 
-This example uses `mini-swe-agent` with an OpenAI model. Set a model ID available
-to your account in `provider/model` format.
-
 ```bash
 export OPENAI_API_KEY="<your-agent-api-key>"
 export GEMINI_API_KEY="<your-gemini-api-key>"
@@ -68,15 +60,13 @@ harbor run \
   --jobs-dir jobs
 ```
 
-For the full benchmark, change `--path` to `tasks` and add `--n-concurrent 1`.
+For the full benchmark, change `--path` to `tasks` and add `--n-concurrent n`.
 Start with one trial at a time because browser tests use substantial resources.
 For other agents and credentials, see the
 [Harbor agent guide](https://docs.harborframework.com/agents/pre-integrated-agents).
 
 Harbor saves results, logs, and artifacts under `jobs/`. Task verifiers write
-`reward.json`; app tasks also save a video judge result when available. The
-video judge result is separate from the binary test reward. App tasks do not
-include reference solutions; SDK tasks include them under `solution/`.
+`reward.json`; app tasks also save a video judge result when available. 
 
 ## View results
 

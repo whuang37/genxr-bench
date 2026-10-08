@@ -60,13 +60,3 @@ npm ci
 npm run import-job -- ../jobs/<job-id>
 npm run build
 ```
-
-Deploy the complete `dist/` directory to an HTTPS static host. The build uses
-relative asset and job URLs, so the same output works at a domain root or in a
-subdirectory.
-
-The deployed directory must contain `jobs/jobs.json` and each imported job.
-Imported jobs are not committed because `public/jobs/` is ignored. A continuous
-deployment job must import the selected jobs before it runs `npm run build`.
-
-Do not open `dist/index.html` with a `file://` URL. Use an HTTP or HTTPS server.
