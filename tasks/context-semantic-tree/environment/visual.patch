@@ -1,0 +1,674 @@
+diff --git a/docs/manual/Context.mdx b/docs/manual/Context.mdx
+index 8e8b9d53823763c77e5b9e3d905aaa304667f8ca..957b10dddefe1b5cabc299531ccf99607234005b 100644
+--- a/docs/manual/Context.mdx
++++ b/docs/manual/Context.mdx
+@@ -38,9 +38,9 @@ console.log(context.visibleObjects.nodes);
+ console.log(context.setOfMark.marks);
+ ```
+ 
+-Nodes have stable opaque identifiers, names, roles, parent and child relationships,
+-visibility, object identifiers, and interaction state. Visual results correspond to
+-the semantic data captured in the same snapshot.
++Nodes have stable `ctx_*` identifiers, names, roles, parent and child relationships,
++visibility, object identifiers, and interaction state. Set-of-Mark labels reuse those
++stable identifiers between snapshots.
+ 
+ Give meaningful `name` values to application objects and use semantic UI components such
+ as `UIButton`. Mark private helper geometry with `object.userData.xrblocksPrivate = true`
+diff --git a/src/context/scene/SceneDetector.ts b/src/context/scene/SceneDetector.ts
+index 480bc682cf47ef8c6b8d25557551df6835ff36cb..0c9cef5cf424319bac78d06c34d12f318c026dfc 100644
+--- a/src/context/scene/SceneDetector.ts
++++ b/src/context/scene/SceneDetector.ts
+@@ -16,9 +16,13 @@ import {
+   SetOfMarkContext,
+   VisibleObjectsContext,
+ } from '../shared/SemanticTypes';
++import {createSetOfMarkContext} from './som/SetOfMarkBuilder';
++import {createVisibleObjectsContext} from './visible-objects/VisibleObjectsBuilder';
+ 
+ type ContextSnapshot = {
+   semanticInternal?: SemanticTreeInternal;
++  visibleObjects?: VisibleObjectsContext;
++  som?: SetOfMarkContext;
+ };
+ 
+ export type SceneContextDetectionOptions = {
+@@ -45,13 +49,19 @@ export class SceneDetector extends Script {
+ 
+   private options!: ContextOptions;
+   private scene!: THREE.Scene;
++  private camera!: THREE.Camera;
++  private screenshotSynthesizer!: ScreenshotSynthesizer;
+   private simulationTimer?: SimulationTimer;
+   private interaction?: Interaction;
++  private deviceCamera?: XRDeviceCamera;
+   private registry = new SemanticIdRegistry();
+   private snapshot: ContextSnapshot | null = null;
+   private snapshotPromise: Promise<ContextSnapshot> | null = null;
+   private activeClients = new Set<object>();
+   private currentDetectionPromise: Promise<SemanticTree> | null = null;
++  private currentVisibleObjectsPromise: Promise<VisibleObjectsContext> | null =
++    null;
++  private currentSetOfMarkPromise: Promise<SetOfMarkContext> | null = null;
+   private currentContextPromise: Promise<SceneContextDetectionResult> | null =
+     null;
+   private currentContextRequestKey = '';
+@@ -92,17 +102,17 @@ export class SceneDetector extends Script {
+   }) {
+     this.options = options;
+     this.scene = scene;
++    this.camera = camera;
++    this.screenshotSynthesizer = screenshotSynthesizer;
+     this.simulationTimer = simulationTimer;
+     this.interaction = interaction;
+-    void camera;
+-    void screenshotSynthesizer;
+-    void deviceCamera;
++    this.deviceCamera = deviceCamera ?? this.deviceCamera;
+     this.snapshot = null;
+     this.disposed = false;
+   }
+ 
+   setDeviceCamera(deviceCamera: XRDeviceCamera | undefined) {
+-    void deviceCamera;
++    this.deviceCamera = deviceCamera;
+   }
+ 
+   resolveNodeObject(nodeId: string): THREE.Object3D | undefined {
+@@ -171,11 +181,37 @@ export class SceneDetector extends Script {
+   }
+ 
+   runVisibleObjectsDetection(): Promise<VisibleObjectsContext> {
+-    throw new Error('Visual context is not implemented.');
++    if (this.currentVisibleObjectsPromise) {
++      return this.currentVisibleObjectsPromise;
++    }
++    this.currentVisibleObjectsPromise = this.runContextDetection({
++      semanticTree: false,
++      visibleObjects: true,
++    })
++      .then((result) => result.visibleObjects!)
++      .finally(() => {
++        this.currentVisibleObjectsPromise = null;
++      });
++    return this.currentVisibleObjectsPromise;
+   }
+ 
+   runSetOfMarkDetection(): Promise<SetOfMarkContext> {
+-    throw new Error('Visual context is not implemented.');
++    if (this.currentSetOfMarkPromise) {
++      return this.currentSetOfMarkPromise;
++    }
++    this.currentSetOfMarkPromise = this.runContextDetection(
++      {
++        semanticTree: false,
++        visibleObjects: true,
++        setOfMark: true,
++      },
++      {preserveVisibleObjects: true}
++    )
++      .then((result) => result.setOfMark!)
++      .finally(() => {
++        this.currentSetOfMarkPromise = null;
++      });
++    return this.currentSetOfMarkPromise;
+   }
+ 
+   runContextDetection(
+@@ -191,9 +227,6 @@ export class SceneDetector extends Script {
+       visibleObjects: options.visibleObjects === true,
+       setOfMark: options.setOfMark === true,
+     };
+-    if (request.visibleObjects || request.setOfMark) {
+-      throw new Error('Visual context is not implemented.');
+-    }
+     const requestKey = JSON.stringify({
+       ...request,
+       preserveVisibleObjects: snapshotOptions.preserveVisibleObjects === true,
+@@ -204,7 +237,7 @@ export class SceneDetector extends Script {
+     ) {
+       return this.currentContextPromise;
+     }
+-    this.beginSnapshot();
++    this.beginSnapshot(snapshotOptions);
+     this.currentContextRequestKey = requestKey;
+     this.currentContextPromise = this.detectSceneContext(request).finally(
+       () => {
+@@ -251,10 +284,26 @@ export class SceneDetector extends Script {
+       }
+       this.tree = result.semanticTree;
+     }
++    if (options.visibleObjects || options.setOfMark) {
++      result.visibleObjects = await this.getVisibleObjectsContext();
++      if (this.disposed) {
++        return {};
++      }
++    }
++    if (options.setOfMark) {
++      result.setOfMark = await this.getSetOfMarkContext();
++      if (this.disposed) {
++        return {};
++      }
++    }
+     return this.disposed ? {} : result;
+   }
+ 
+-  private beginSnapshot() {
++  private beginSnapshot(options: {preserveVisibleObjects?: boolean} = {}) {
++    if (options.preserveVisibleObjects && this.snapshot?.visibleObjects) {
++      this.snapshot.som = undefined;
++      return;
++    }
+     this.snapshot = {};
+   }
+ 
+@@ -263,6 +312,52 @@ export class SceneDetector extends Script {
+     return snapshot.semanticInternal!.tree;
+   }
+ 
++  private async getVisibleObjectsContext(
++    camera = this.camera
++  ): Promise<VisibleObjectsContext> {
++    const snapshot = await this.getSnapshot();
++    if (!snapshot.visibleObjects) {
++      snapshot.visibleObjects = createVisibleObjectsContext({
++        scene: this.scene,
++        camera,
++        semanticTree: snapshot.semanticInternal!,
++        occlusionOpacityThreshold:
++          this.options.scene.visibleObjects.occlusionOpacityThreshold,
++      });
++    }
++    if (!this.disposed) {
++      this.visibleObjects = snapshot.visibleObjects;
++    }
++    return snapshot.visibleObjects;
++  }
++
++  private async getSetOfMarkContext(): Promise<SetOfMarkContext> {
++    const snapshot = await this.getSnapshot();
++    if (!snapshot.som) {
++      const camera = this.camera;
++      camera.updateMatrixWorld(true);
++      camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
++      const projectionMatrix = camera.projectionMatrix.clone();
++      const matrixWorldInverse = camera.matrixWorldInverse.clone();
++      const visibleObjects = await this.getVisibleObjectsContext(camera);
++      const overlayOnCamera = this.deviceCamera?.loaded === true;
++      const screenshot =
++        await this.screenshotSynthesizer.getScreenshot(overlayOnCamera);
++      snapshot.som = await createSetOfMarkContext({
++        tree: visibleObjects,
++        image: screenshot,
++        nodeObjects: snapshot.semanticInternal!.nodeObjects,
++        registry: this.registry,
++        projectionMatrix,
++        matrixWorldInverse,
++      });
++    }
++    if (!this.disposed) {
++      this.setOfMark = snapshot.som;
++    }
++    return snapshot.som;
++  }
++
+   private async getSnapshot(): Promise<ContextSnapshot> {
+     if (this.snapshot?.semanticInternal) {
+       return this.snapshot;
+@@ -294,6 +389,8 @@ export class SceneDetector extends Script {
+     this.snapshot = null;
+     this.snapshotPromise = null;
+     this.currentDetectionPromise = null;
++    this.currentVisibleObjectsPromise = null;
++    this.currentSetOfMarkPromise = null;
+     this.currentContextPromise = null;
+     this.currentContextRequestKey = '';
+     this.tree = null;
+diff --git a/src/context/scene/som/SetOfMarkBuilder.ts b/src/context/scene/som/SetOfMarkBuilder.ts
+index a7f4629d83a08aea3c868dcf9164e5e20d14eb84..42534e085c267ad1f11a1d6d058aef9115660429 100644
+--- a/src/context/scene/som/SetOfMarkBuilder.ts
++++ b/src/context/scene/som/SetOfMarkBuilder.ts
+@@ -1,27 +1,140 @@
+ import * as THREE from 'three';
+ 
++import {roundContextNumber} from '../../shared/ContextNumberUtils';
++import {SemanticIdRegistry} from '../../shared/SemanticIdRegistry';
++import {getObjectBounds} from '../../shared/SemanticObjectUtils';
+ import {
++  SetOfMark,
+   SetOfMarkContext,
+   VisibleObjectsContext,
+ } from '../../shared/SemanticTypes';
+ 
++const tempCenter = new THREE.Vector3();
++const tempBoundsBox = new THREE.Box3();
++const tempProjection = new THREE.Vector3();
++
+ export async function createSetOfMarkContext({
+   tree,
+   image,
+   nodeObjects,
++  registry,
+   projectionMatrix,
+   matrixWorldInverse,
+ }: {
+   tree: VisibleObjectsContext;
+   image: string;
+   nodeObjects: Map<string, THREE.Object3D>;
++  registry: SemanticIdRegistry;
+   projectionMatrix: THREE.Matrix4;
+   matrixWorldInverse: THREE.Matrix4;
+ }): Promise<SetOfMarkContext> {
+-  void tree;
+-  void image;
+-  void nodeObjects;
+-  void projectionMatrix;
+-  void matrixWorldInverse;
+-  throw new Error('Visual context is not implemented.');
++  const marks: SetOfMark[] = [];
++  for (const node of Object.values(tree.nodes)) {
++    if (!node.view?.inLineOfSight) {
++      continue;
++    }
++    const object = nodeObjects.get(node.id);
++    if (!object) {
++      continue;
++    }
++    const screenPosition = projectObjectCenter(
++      object,
++      projectionMatrix,
++      matrixWorldInverse
++    );
++    if (!screenPosition) {
++      continue;
++    }
++    marks.push({
++      label: registry.getMarkLabel(object),
++      nodeId: node.id,
++      role: node.role,
++      name: node.name,
++      x: screenPosition.x,
++      y: screenPosition.y,
++    });
++  }
++
++  return {
++    snapshotId: tree.snapshotId,
++    capturedAt: tree.capturedAt,
++    image: await renderSetOfMarkImage(image, marks),
++    marks,
++  };
++}
++
++function projectObjectCenter(
++  object: THREE.Object3D,
++  projectionMatrix: THREE.Matrix4,
++  matrixWorldInverse: THREE.Matrix4
++) {
++  const box = getObjectBounds(object, tempBoundsBox);
++  if (box) {
++    box.getCenter(tempCenter);
++  } else {
++    object.getWorldPosition(tempCenter);
++  }
++
++  const projected = tempProjection
++    .copy(tempCenter)
++    .applyMatrix4(matrixWorldInverse)
++    .applyMatrix4(projectionMatrix);
++  if (
++    projected.x < -1 ||
++    projected.x > 1 ||
++    projected.y < -1 ||
++    projected.y > 1 ||
++    projected.z < -1 ||
++    projected.z > 1
++  ) {
++    return null;
++  }
++  return {
++    x: roundContextNumber((projected.x + 1) / 2),
++    y: roundContextNumber((1 - projected.y) / 2),
++  };
++}
++
++async function renderSetOfMarkImage(
++  image: string,
++  marks: SetOfMark[]
++): Promise<string> {
++  if (typeof document === 'undefined' || !image || marks.length === 0) {
++    return image;
++  }
++
++  const img = new Image();
++  img.src = image;
++  await new Promise<void>((resolve, reject) => {
++    img.onload = () => resolve();
++    img.onerror = () => reject(new Error('Failed to load SOM screenshot.'));
++  });
++
++  const canvas = document.createElement('canvas');
++  canvas.width = img.width;
++  canvas.height = img.height;
++  const ctx = canvas.getContext('2d');
++  if (!ctx) {
++    return image;
++  }
++  ctx.drawImage(img, 0, 0);
++
++  for (const mark of marks) {
++    const x = mark.x * canvas.width;
++    const y = mark.y * canvas.height;
++    ctx.beginPath();
++    ctx.arc(x, y, 14, 0, Math.PI * 2);
++    ctx.fillStyle = '#ff005599';
++    ctx.fill();
++    ctx.lineWidth = 2;
++    ctx.strokeStyle = '#ffffff';
++    ctx.stroke();
++    ctx.fillStyle = '#ffffff';
++    ctx.font = 'bold 14px Arial';
++    ctx.textAlign = 'center';
++    ctx.textBaseline = 'middle';
++    ctx.fillText(mark.label, x, y);
++  }
++
++  return canvas.toDataURL('image/png');
+ }
+diff --git a/src/context/scene/visible-objects/VisibleObjectsBuilder.ts b/src/context/scene/visible-objects/VisibleObjectsBuilder.ts
+index c9433453a301e693e201a6edec2c80a2df66c817..91e34d6f84064d2d950bbef24b0a35946209f8e7 100644
+--- a/src/context/scene/visible-objects/VisibleObjectsBuilder.ts
++++ b/src/context/scene/visible-objects/VisibleObjectsBuilder.ts
+@@ -1,7 +1,25 @@
+ import * as THREE from 'three';
+ 
++import {roundContextNumber} from '../../shared/ContextNumberUtils';
+ import {SemanticTreeInternal} from '../semantic-tree/SemanticTreeBuilder';
+-import {SemanticTree} from '../../shared/SemanticTypes';
++import {
++  getObjectBounds,
++  isDescendantOf,
++  isObjectVisible,
++  isSemanticInternalObject,
++} from '../../shared/SemanticObjectUtils';
++import {
++  SemanticNode,
++  SemanticTree,
++  SemanticViewData,
++} from '../../shared/SemanticTypes';
++
++const tempCenter = new THREE.Vector3();
++const tempProjection = new THREE.Vector3();
++const tempCameraPosition = new THREE.Vector3();
++const tempDirection = new THREE.Vector3();
++const tempBoundsBox = new THREE.Box3();
++const raycaster = new THREE.Raycaster();
+ 
+ export function createVisibleObjectsContext({
+   scene,
+@@ -14,9 +32,178 @@ export function createVisibleObjectsContext({
+   semanticTree: SemanticTreeInternal;
+   occlusionOpacityThreshold?: number;
+ }): SemanticTree {
+-  void scene;
+-  void camera;
+-  void semanticTree;
+-  void occlusionOpacityThreshold;
+-  throw new Error('Visual context is not implemented.');
++  scene.updateMatrixWorld(true);
++  camera.updateMatrixWorld(true);
++  camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
++
++  const nodes = {...semanticTree.tree.nodes};
++  const raycastTargets = scene.children.filter(
++    (child) => child.visible && !isSemanticInternalObject(child)
++  );
++  for (const nodeId of Object.keys(nodes)) {
++    const node = nodes[nodeId];
++    const object = semanticTree.nodeObjects.get(nodeId);
++    nodes[nodeId] = {
++      ...node,
++      view: object
++        ? createSemanticViewData({
++            camera,
++            node,
++            object,
++            raycastTargets,
++            occlusionOpacityThreshold,
++          })
++        : createNotRenderedViewData(),
++    };
++  }
++
++  return {
++    ...semanticTree.tree,
++    nodes,
++  };
++}
++
++function createSemanticViewData({
++  camera,
++  node,
++  object,
++  raycastTargets,
++  occlusionOpacityThreshold,
++}: {
++  camera: THREE.Camera;
++  node: SemanticNode;
++  object: THREE.Object3D;
++  raycastTargets: THREE.Object3D[];
++  occlusionOpacityThreshold: number;
++}): SemanticViewData {
++  if (!node.visible || !isObjectVisible(object)) {
++    return createNotRenderedViewData();
++  }
++
++  const box = getObjectBounds(object, tempBoundsBox);
++  const center =
++    box?.getCenter(tempCenter) ?? object.getWorldPosition(tempCenter);
++  const projected = projectWorldPoint(center, camera);
++  const inFrame = isProjectedInFrame(projected);
++  if (!inFrame) {
++    return {
++      rendered: true,
++      inFrame: false,
++      inLineOfSight: false,
++      ...projectedToScreenCoordinates(projected),
++    };
++  }
++
++  const inLineOfSight = isObjectInLineOfSight({
++    camera,
++    object,
++    targetPoint: center,
++    raycastTargets,
++    occlusionOpacityThreshold,
++  });
++
++  return {
++    rendered: true,
++    inFrame: true,
++    inLineOfSight,
++    ...projectedToScreenCoordinates(projected),
++  };
++}
++
++function createNotRenderedViewData(): SemanticViewData {
++  return {
++    rendered: false,
++    inFrame: false,
++    inLineOfSight: false,
++  };
++}
++
++function projectWorldPoint(point: THREE.Vector3, camera: THREE.Camera) {
++  return tempProjection
++    .copy(point)
++    .applyMatrix4(camera.matrixWorldInverse)
++    .applyMatrix4(camera.projectionMatrix);
++}
++
++function isProjectedInFrame(projected: THREE.Vector3): boolean {
++  return (
++    projected.x >= -1 &&
++    projected.x <= 1 &&
++    projected.y >= -1 &&
++    projected.y <= 1 &&
++    projected.z >= -1 &&
++    projected.z <= 1
++  );
++}
++
++function projectedToScreenCoordinates(projected: THREE.Vector3) {
++  return {
++    x: roundContextNumber((projected.x + 1) / 2),
++    y: roundContextNumber((1 - projected.y) / 2),
++  };
++}
++
++function isObjectInLineOfSight({
++  camera,
++  object,
++  targetPoint,
++  raycastTargets,
++  occlusionOpacityThreshold,
++}: {
++  camera: THREE.Camera;
++  object: THREE.Object3D;
++  targetPoint: THREE.Vector3;
++  raycastTargets: THREE.Object3D[];
++  occlusionOpacityThreshold: number;
++}): boolean {
++  camera.getWorldPosition(tempCameraPosition);
++  tempDirection.copy(targetPoint).sub(tempCameraPosition);
++  const targetDistance = tempDirection.length();
++  if (targetDistance <= 0) {
++    return true;
++  }
++
++  raycaster.camera = camera;
++  raycaster.set(tempCameraPosition, tempDirection.normalize());
++  raycaster.near = 0;
++  raycaster.far = targetDistance;
++
++  const hits = raycaster.intersectObjects(raycastTargets, true);
++  const occludingHit = hits.find((hit) => {
++    if (hit.distance >= targetDistance - 1e-4) {
++      return false;
++    }
++    if (isSemanticInternalObject(hit.object)) {
++      return false;
++    }
++    if (
++      isDescendantOf(hit.object, object) ||
++      isDescendantOf(object, hit.object)
++    ) {
++      return false;
++    }
++    if (!isOpacityOccluding(hit.object, occlusionOpacityThreshold)) {
++      return false;
++    }
++    return isObjectVisible(hit.object);
++  });
++
++  return occludingHit === undefined;
++}
++
++function isOpacityOccluding(
++  object: THREE.Object3D,
++  occlusionOpacityThreshold: number
++) {
++  if (!(object instanceof THREE.Mesh)) {
++    return true;
++  }
++  return getMaterialOpacity(object.material) > occlusionOpacityThreshold;
++}
++
++function getMaterialOpacity(material: THREE.Material | THREE.Material[]) {
++  const materials = Array.isArray(material) ? material : [material];
++  return Math.max(
++    ...materials.map((item) => (item.transparent ? item.opacity : 1))
++  );
+ }
+diff --git a/src/context/shared/SemanticIdRegistry.ts b/src/context/shared/SemanticIdRegistry.ts
+index 8fa9ebac4e429ace03388842ca522624a3d0e92a..15045a88d0621250d990e9b4a0ad835252a9feb0 100644
+--- a/src/context/shared/SemanticIdRegistry.ts
++++ b/src/context/shared/SemanticIdRegistry.ts
+@@ -1,8 +1,22 @@
+ import * as THREE from 'three';
+ 
++const LABEL_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
++
++function formatLabel(index: number): string {
++  let value = index;
++  let label = '';
++  do {
++    label = LABEL_ALPHABET[value % LABEL_ALPHABET.length] + label;
++    value = Math.floor(value / LABEL_ALPHABET.length) - 1;
++  } while (value >= 0);
++  return label;
++}
++
+ export class SemanticIdRegistry {
+   private nextNodeIndex = 1;
++  private nextLabelIndex = 0;
+   private nodeIds = new WeakMap<THREE.Object3D, string>();
++  private labels = new WeakMap<THREE.Object3D, string>();
+ 
+   getNodeId(object: THREE.Object3D): string {
+     let id = this.nodeIds.get(object);
+@@ -12,4 +26,13 @@ export class SemanticIdRegistry {
+     }
+     return id;
+   }
++
++  getMarkLabel(object: THREE.Object3D): string {
++    let label = this.labels.get(object);
++    if (!label) {
++      label = formatLabel(this.nextLabelIndex++);
++      this.labels.set(object, label);
++    }
++    return label;
++  }
+ }
+diff --git a/src/context/shared/SemanticObjectUtils.ts b/src/context/shared/SemanticObjectUtils.ts
+index fe7a634030cde93e0d53dd6fd708bec1ea7866d8..d19bd348894e2ea8f0bcc1fd5df52811e1341a5b 100644
+--- a/src/context/shared/SemanticObjectUtils.ts
++++ b/src/context/shared/SemanticObjectUtils.ts
+@@ -28,6 +28,15 @@ export function isSemanticInternalObject(object: THREE.Object3D): boolean {
+   return false;
+ }
+ 
++export function isObjectVisible(object: THREE.Object3D): boolean {
++  let current: THREE.Object3D | null = object;
++  while (current) {
++    if (!current.visible) return false;
++    current = current.parent;
++  }
++  return true;
++}
++
+ export function hasRenderableDescendant(object: THREE.Object3D): boolean {
+   const stack = [...object.children];
+   while (stack.length > 0) {
+@@ -47,6 +56,20 @@ export function hasRenderableDescendant(object: THREE.Object3D): boolean {
+   return false;
+ }
+ 
++export function isDescendantOf(
++  object: THREE.Object3D,
++  ancestor: THREE.Object3D
++): boolean {
++  let current: THREE.Object3D | null = object;
++  while (current) {
++    if (current === ancestor) {
++      return true;
++    }
++    current = current.parent;
++  }
++  return false;
++}
++
+ export function getObjectBounds(
+   object: THREE.Object3D,
+   target?: THREE.Box3

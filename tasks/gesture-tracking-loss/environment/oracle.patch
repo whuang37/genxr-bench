@@ -1,0 +1,29 @@
+diff --git a/src/input/gestures/GestureRecognition.ts b/src/input/gestures/GestureRecognition.ts
+index b136ccdede96ccc5302d4ccd94f6609055054227..cec6a0ca1afdb576be01e9a9e9293c8d6903cb96 100644
+--- a/src/input/gestures/GestureRecognition.ts
++++ b/src/input/gestures/GestureRecognition.ts
+@@ -48,10 +48,6 @@ export class GestureRecognition extends Script<GestureRecognitionEventMap> {
+     left: false,
+     right: false,
+   };
+-  private lastContexts: Record<HandLabel, HandContext | null> = {
+-    left: null,
+-    right: null,
+-  };
+   private lastEvaluation = 0;
+ 
+   async init({
+@@ -90,12 +86,7 @@ export class GestureRecognition extends Script<GestureRecognitionEventMap> {
+     if (!handLabel) return;
+     const activeMap = this.activeGestures[handLabel];
+ 
+-    let context = this.options.poseEstimator.getHandContext(handedness);
+-    if (context) {
+-      this.lastContexts[handLabel] = context;
+-    } else {
+-      context = this.lastContexts[handLabel];
+-    }
++    const context = this.options.poseEstimator.getHandContext(handedness);
+     if (!context) {
+       for (const [name] of activeMap.entries()) {
+         this.emitGesture('gestureend', {name, hand: handLabel, confidence: 0});

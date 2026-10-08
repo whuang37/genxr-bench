@@ -1,0 +1,618 @@
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+
+import {XR_BLOCKS_LOCAL_ASSETS_PATH} from '../constants';
+import {HAND_JOINT_NAMES} from '../input/components/HandJointNames';
+import {Handedness} from '../input/Hands';
+import {Input} from '../input/Input';
+import {disposeObjectChildren} from '../utils/ThreeDisposal';
+import type {DeepReadonly} from '../utils/Types';
+
+import {SimulatorHandPoseChangeRequestEvent} from './events/SimulatorHandEvents';
+import {
+  SimulatorHandPoseJoints,
+  SimulatorHandPoseRotations,
+} from './handPoses/HandPoseJoints';
+import {SimulatorHandPose} from './handPoses/HandPoses';
+import {
+  applySimulatorHandPoseRotationConstraints,
+  resolveSimulatorHandPoseRotations,
+} from './handPoses/HandPoseFK';
+import {SIMULATOR_HAND_POSE_ROTATIONS} from './handPoses/HandPoseRotations';
+import {SimulatorControllerState} from './SimulatorControllerState';
+import {SimulatorXRHand} from './SimulatorXRHand';
+import type {SimulatorPhysics} from './scene/SimulatorPhysics';
+import type {SimulatorOptions} from './SimulatorOptions';
+
+const DEFAULT_HAND_PROFILE_PATH = `${XR_BLOCKS_LOCAL_ASSETS_PATH}simulator/hands/`;
+
+const vector3 = new THREE.Vector3();
+const quaternion = new THREE.Quaternion();
+const wristPosition = new THREE.Vector3();
+const metacarpalPosition = new THREE.Vector3();
+const desiredPalmPosition = new THREE.Vector3();
+const constrainedPalmPosition = new THREE.Vector3();
+const controllerWorldPosition = new THREE.Vector3();
+const handOriginWorldPosition = new THREE.Vector3();
+const ROTATION_JOINT_NAMES = HAND_JOINT_NAMES.filter(
+  (jointName) => !jointName.endsWith('-tip')
+);
+
+export type SimulatorHandPoseHTMLElement = HTMLElement & {
+  visible: boolean;
+  handPose?: SimulatorHandPose;
+};
+
+function cloneHandPoseRotations(
+  rotations: DeepReadonly<SimulatorHandPoseRotations>
+): SimulatorHandPoseRotations {
+  const clonedRotations: SimulatorHandPoseRotations = {};
+  for (const jointName of ROTATION_JOINT_NAMES) {
+    const rotation = rotations[jointName];
+    if (!rotation) continue;
+    clonedRotations[jointName] = [rotation[0], rotation[1], rotation[2]];
+  }
+  return clonedRotations;
+}
+
+function lerpHandPoseRotations(
+  currentRotations: SimulatorHandPoseRotations,
+  targetRotations: DeepReadonly<SimulatorHandPoseRotations>,
+  lerpSpeed: number
+) {
+  for (const jointName of ROTATION_JOINT_NAMES) {
+    const currentRotation =
+      currentRotations[jointName] ?? (currentRotations[jointName] = [0, 0, 0]);
+    const targetRotation = targetRotations[jointName] ?? [0, 0, 0];
+    currentRotation[0] += (targetRotation[0] - currentRotation[0]) * lerpSpeed;
+    currentRotation[1] += (targetRotation[1] - currentRotation[1]) * lerpSpeed;
+    currentRotation[2] += (targetRotation[2] - currentRotation[2]) * lerpSpeed;
+  }
+}
+
+function applyHandJoints(
+  bones: Array<THREE.Object3D | undefined>,
+  joints: DeepReadonly<SimulatorHandPoseJoints>
+) {
+  for (let i = 0; i < bones.length; i++) {
+    const bone = bones[i];
+    const jointData = joints[i];
+    if (!bone || !jointData) continue;
+    bone.position.fromArray(jointData.t);
+    bone.quaternion.fromArray(jointData.r);
+    bone.scale.fromArray([1, 1, 1]);
+  }
+}
+
+function lerpHandJoints(
+  bones: Array<THREE.Object3D | undefined>,
+  joints: DeepReadonly<SimulatorHandPoseJoints>,
+  lerpSpeed: number
+) {
+  for (let i = 0; i < bones.length; i++) {
+    const bone = bones[i];
+    const targetJoint = joints[i];
+    if (!bone || !targetJoint) continue;
+    vector3.fromArray(targetJoint.t);
+    quaternion.fromArray(targetJoint.r);
+    bone.position.lerp(vector3, lerpSpeed);
+    bone.quaternion.slerp(quaternion, lerpSpeed);
+  }
+}
+
+export class SimulatorHands {
+  leftController = new THREE.Object3D();
+  rightController = new THREE.Object3D();
+  leftHand?: THREE.Group;
+  rightHand?: THREE.Group;
+  leftHandBones: Array<THREE.Object3D | undefined> = [];
+  rightHandBones: Array<THREE.Object3D | undefined> = [];
+  leftHandPose? = SimulatorHandPose.RELAXED;
+  rightHandPose? = SimulatorHandPose.RELAXED;
+  leftHandAtMaxRange = false;
+  rightHandAtMaxRange = false;
+  leftHandCurrentRotations = cloneHandPoseRotations(
+    SIMULATOR_HAND_POSE_ROTATIONS[SimulatorHandPose.RELAXED]
+  );
+  rightHandCurrentRotations = cloneHandPoseRotations(
+    SIMULATOR_HAND_POSE_ROTATIONS[SimulatorHandPose.RELAXED]
+  );
+  leftHandTargetRotations = cloneHandPoseRotations(
+    SIMULATOR_HAND_POSE_ROTATIONS[SimulatorHandPose.RELAXED]
+  );
+  rightHandTargetRotations = cloneHandPoseRotations(
+    SIMULATOR_HAND_POSE_ROTATIONS[SimulatorHandPose.RELAXED]
+  );
+  lerpSpeed = 0.1;
+  handPosePanelElement?: SimulatorHandPoseHTMLElement;
+  input!: Input;
+  loader!: GLTFLoader;
+  private physics?: SimulatorPhysics;
+  private camera?: THREE.Camera;
+  private simulatorOptions?: SimulatorOptions;
+
+  private leftXRHand = new SimulatorXRHand();
+  private rightXRHand = new SimulatorXRHand();
+  private leftHandRawTargetJoints?: DeepReadonly<SimulatorHandPoseJoints>;
+  private rightHandRawTargetJoints?: DeepReadonly<SimulatorHandPoseJoints>;
+
+  constructor(
+    private simulatorControllerState: SimulatorControllerState,
+    private simulatorScene: THREE.Scene
+  ) {}
+
+  /**
+   * Initialize Simulator Hands.
+   */
+  async init({
+    input,
+    physics,
+    camera,
+    simulatorOptions,
+  }: {
+    input: Input;
+    physics?: SimulatorPhysics;
+    camera?: THREE.Camera;
+    simulatorOptions?: SimulatorOptions;
+  }) {
+    this.input = input;
+    this.physics = physics;
+    this.camera = camera;
+    this.simulatorOptions = simulatorOptions;
+    await this.loadMeshes();
+    this.simulatorScene.add(this.leftController);
+    this.simulatorScene.add(this.rightController);
+  }
+
+  loadMeshes() {
+    this.loader = new GLTFLoader();
+    this.loader.setPath(DEFAULT_HAND_PROFILE_PATH);
+    return Promise.all([
+      this.loadHandMesh('left.glb', Handedness.LEFT),
+      this.loadHandMesh('right.glb', Handedness.RIGHT),
+    ]);
+  }
+
+  private loadHandMesh(path: string, handedness: Handedness) {
+    return new Promise<void>((resolve, reject) => {
+      this.loader.load(
+        path,
+        (gltf) => {
+          const isLeft = handedness === Handedness.LEFT;
+          const handednessName = isLeft ? 'left' : 'right';
+          const bones = isLeft ? this.leftHandBones : this.rightHandBones;
+          bones.length = 0;
+          if (isLeft) {
+            this.leftHand = gltf.scene;
+            this.leftController.add(this.leftHand);
+          } else {
+            this.rightHand = gltf.scene;
+            this.rightController.add(this.rightHand);
+          }
+          HAND_JOINT_NAMES.forEach((jointName) => {
+            const bone = gltf.scene.getObjectByName(jointName);
+            bones.push(bone);
+            if (!bone) {
+              console.warn(
+                `Couldn't find ${jointName} in ${handednessName} hand mesh`
+              );
+            }
+          });
+          applyHandJoints(
+            bones,
+            resolveSimulatorHandPoseRotations(
+              handedness,
+              isLeft
+                ? this.leftHandCurrentRotations
+                : this.rightHandCurrentRotations
+            )
+          );
+          // Three.js starts reading every joint as soon as it receives the
+          // connected event. Populate the complete joint map first so a frame
+          // cannot render a partially connected simulator hand.
+          this.syncHandJoints();
+          this.input.hands[isLeft ? 0 : 1]?.dispatchEvent?.({
+            type: 'connected',
+            data: {
+              hand: isLeft ? this.leftXRHand : this.rightXRHand,
+              handedness: handednessName,
+            } as XRInputSource,
+          });
+          resolve();
+        },
+        () => {},
+        (error) => reject(error)
+      );
+    });
+  }
+
+  setLeftHandLerpPose(pose: SimulatorHandPose) {
+    if (
+      this.leftHandPose !== SimulatorHandPose.PINCHING &&
+      pose === SimulatorHandPose.PINCHING
+    ) {
+      this.input.dispatchEvent({
+        type: 'selectstart',
+        target: this.input.controllers[0],
+        data: {
+          handedness: 'left',
+        },
+      });
+    } else if (
+      this.leftHandPose === SimulatorHandPose.PINCHING &&
+      pose !== SimulatorHandPose.PINCHING
+    ) {
+      this.input.dispatchEvent({
+        type: 'selectend',
+        target: this.input.controllers[0],
+        data: {
+          handedness: 'left',
+        },
+      });
+    }
+
+    this.leftHandPose = pose;
+    this.leftHandRawTargetJoints = undefined;
+    this.leftHandTargetRotations = cloneHandPoseRotations(
+      SIMULATOR_HAND_POSE_ROTATIONS[pose]
+    );
+    this.updateHandPosePanel();
+  }
+
+  setRightHandLerpPose(pose: SimulatorHandPose) {
+    if (
+      this.rightHandPose !== SimulatorHandPose.PINCHING &&
+      pose === SimulatorHandPose.PINCHING
+    ) {
+      this.input.dispatchEvent({
+        type: 'selectstart',
+        target: this.input.controllers[1],
+        data: {
+          handedness: 'right',
+        },
+      });
+    } else if (
+      this.rightHandPose === SimulatorHandPose.PINCHING &&
+      pose !== SimulatorHandPose.PINCHING
+    ) {
+      this.input.dispatchEvent({
+        type: 'selectend',
+        target: this.input.controllers[1],
+        data: {
+          handedness: 'right',
+        },
+      });
+    }
+
+    this.rightHandPose = pose;
+    this.rightHandRawTargetJoints = undefined;
+    this.rightHandTargetRotations = cloneHandPoseRotations(
+      SIMULATOR_HAND_POSE_ROTATIONS[pose]
+    );
+    this.updateHandPosePanel();
+  }
+
+  /** Applies semantic biomechanical rotations from SimulatorHandPoseRotations. */
+  setLeftHandRotations(
+    rotations: SimulatorHandPoseRotations,
+    applyConstraints = false
+  ) {
+    if (this.leftHandPose === SimulatorHandPose.PINCHING) {
+      this.input.dispatchEvent({
+        type: 'selectend',
+        target: this.input.controllers[0],
+        data: {
+          handedness: 'left',
+        },
+      });
+    }
+    this.leftHandPose = undefined;
+    this.leftHandRawTargetJoints = undefined;
+    this.leftHandTargetRotations = cloneHandPoseRotations(
+      applyConstraints
+        ? applySimulatorHandPoseRotationConstraints(rotations)
+        : rotations
+    );
+    this.updateHandPosePanel();
+  }
+
+  /** Applies semantic biomechanical rotations from SimulatorHandPoseRotations. */
+  setRightHandRotations(
+    rotations: SimulatorHandPoseRotations,
+    applyConstraints = false
+  ) {
+    if (this.rightHandPose === SimulatorHandPose.PINCHING) {
+      this.input.dispatchEvent({
+        type: 'selectend',
+        target: this.input.controllers[1],
+        data: {
+          handedness: 'right',
+        },
+      });
+    }
+    this.rightHandPose = undefined;
+    this.rightHandRawTargetJoints = undefined;
+    this.rightHandTargetRotations = cloneHandPoseRotations(
+      applyConstraints
+        ? applySimulatorHandPoseRotationConstraints(rotations)
+        : rotations
+    );
+    this.updateHandPosePanel();
+  }
+
+  setLeftHandJoints(joints: DeepReadonly<SimulatorHandPoseJoints>) {
+    // Unset the pose if the joints are manually defined.
+    if (this.leftHandPose === SimulatorHandPose.PINCHING) {
+      this.input.dispatchEvent({
+        type: 'selectend',
+        target: this.input.controllers[0],
+        data: {
+          handedness: 'left',
+        },
+      });
+    }
+    this.leftHandPose = undefined;
+    this.leftHandRawTargetJoints = joints;
+    applyHandJoints(this.leftHandBones, joints);
+  }
+
+  setRightHandJoints(joints: DeepReadonly<SimulatorHandPoseJoints>) {
+    // Unset the pose if the joints are manually defined.
+    if (this.rightHandPose === SimulatorHandPose.PINCHING) {
+      this.input.dispatchEvent({
+        type: 'selectend',
+        target: this.input.controllers[1],
+        data: {
+          handedness: 'right',
+        },
+      });
+    }
+    this.rightHandPose = undefined;
+    this.rightHandRawTargetJoints = joints;
+    applyHandJoints(this.rightHandBones, joints);
+  }
+
+  update() {
+    this.lerpLeftHandPose();
+    this.lerpRightHandPose();
+    this.constrainHand(0, this.leftController, this.leftHand);
+    this.constrainHand(1, this.rightController, this.rightHand);
+    this.syncHandJoints();
+  }
+
+  private constrainHand(
+    index: number,
+    controller: THREE.Object3D,
+    hand?: THREE.Object3D
+  ) {
+    if (!this.physics) return;
+    controller.updateWorldMatrix(true, true);
+    const wrist = hand?.getObjectByName('wrist');
+    const metacarpal = hand?.getObjectByName('middle-finger-metacarpal');
+    if (wrist && metacarpal) {
+      wrist.getWorldPosition(wristPosition);
+      metacarpal.getWorldPosition(metacarpalPosition);
+      desiredPalmPosition.lerpVectors(wristPosition, metacarpalPosition, 0.5);
+    } else {
+      controller.getWorldPosition(desiredPalmPosition);
+    }
+
+    constrainedPalmPosition.copy(desiredPalmPosition);
+    if (this.camera && this.simulatorOptions) {
+      const origin =
+        index === 0
+          ? this.simulatorOptions.leftHandOrigin
+          : this.simulatorOptions.rightHandOrigin;
+      handOriginWorldPosition
+        .set(origin.x, origin.y, origin.z)
+        .applyMatrix4(this.camera.matrixWorld);
+    }
+    this.physics.constrainHand(
+      index,
+      constrainedPalmPosition,
+      controller.visible,
+      this.camera && this.simulatorOptions ? handOriginWorldPosition : undefined
+    );
+    if (!controller.visible) return;
+
+    controller.getWorldPosition(controllerWorldPosition);
+    controllerWorldPosition.add(
+      constrainedPalmPosition.sub(desiredPalmPosition)
+    );
+    if (controller.parent) {
+      controller.parent.worldToLocal(controllerWorldPosition);
+    }
+    controller.position.copy(controllerWorldPosition);
+    controller.updateWorldMatrix(true, true);
+  }
+
+  lerpLeftHandPose() {
+    if (this.leftHandRawTargetJoints) {
+      lerpHandJoints(
+        this.leftHandBones,
+        this.leftHandRawTargetJoints,
+        this.lerpSpeed
+      );
+      return;
+    }
+
+    lerpHandPoseRotations(
+      this.leftHandCurrentRotations,
+      this.leftHandTargetRotations,
+      this.lerpSpeed
+    );
+    applyHandJoints(
+      this.leftHandBones,
+      resolveSimulatorHandPoseRotations(
+        Handedness.LEFT,
+        this.leftHandCurrentRotations
+      )
+    );
+  }
+
+  lerpRightHandPose() {
+    if (this.rightHandRawTargetJoints) {
+      lerpHandJoints(
+        this.rightHandBones,
+        this.rightHandRawTargetJoints,
+        this.lerpSpeed
+      );
+      return;
+    }
+
+    lerpHandPoseRotations(
+      this.rightHandCurrentRotations,
+      this.rightHandTargetRotations,
+      this.lerpSpeed
+    );
+    applyHandJoints(
+      this.rightHandBones,
+      resolveSimulatorHandPoseRotations(
+        Handedness.RIGHT,
+        this.rightHandCurrentRotations
+      )
+    );
+  }
+
+  syncHandJoints() {
+    const hands = this.input.hands;
+    const leftHand = hands[0];
+    if (leftHand) {
+      this.syncXRHandJoints(leftHand, this.leftController, this.leftHandBones);
+    }
+    const rightHand = hands[1];
+    if (rightHand) {
+      this.syncXRHandJoints(
+        rightHand,
+        this.rightController,
+        this.rightHandBones
+      );
+    }
+  }
+
+  private syncXRHandJoints(
+    hand: THREE.XRHandSpace,
+    controller: THREE.Object3D,
+    bones: Array<THREE.Object3D | undefined>
+  ) {
+    controller.updateWorldMatrix(true, false);
+    hand.position.setFromMatrixPosition(controller.matrixWorld);
+    hand.setRotationFromMatrix(controller.matrixWorld);
+    hand.updateMatrix();
+    for (let i = 0; i < HAND_JOINT_NAMES.length; i++) {
+      const jointName = HAND_JOINT_NAMES[i];
+      let joint = hand.joints[jointName];
+      if (!joint) {
+        joint = new THREE.Group() as THREE.XRJointSpace;
+        hand.joints[jointName] = joint;
+        hand.add(joint);
+      }
+      const bone = bones[i];
+      joint.visible = bone !== undefined;
+      if (!bone) continue;
+      joint.position.copy(bone.position);
+      joint.quaternion.copy(bone.quaternion);
+    }
+    hand.updateWorldMatrix(false, true);
+  }
+
+  setLeftHandPinching(pinching = true) {
+    this.setLeftHandLerpPose(
+      pinching ? SimulatorHandPose.PINCHING : SimulatorHandPose.RELAXED
+    );
+  }
+
+  setRightHandPinching(pinching = true) {
+    this.setRightHandLerpPose(
+      pinching ? SimulatorHandPose.PINCHING : SimulatorHandPose.RELAXED
+    );
+  }
+
+  showHands() {
+    this.leftController.visible = true;
+    this.rightController.visible = true;
+    for (let i = 0; i < this.input.hands.length; i++) {
+      this.input.hands[i].visible = true;
+    }
+    this.updateHandPosePanel();
+  }
+
+  hideHands() {
+    this.leftController.visible = false;
+    this.rightController.visible = false;
+    for (let i = 0; i < this.input.hands.length; i++) {
+      this.input.hands[i].visible = false;
+    }
+    this.updateHandPosePanel();
+  }
+
+  updateHandPosePanel() {
+    if (!this.handPosePanelElement) return;
+    if (this.simulatorControllerState.currentControllerIndex === 0) {
+      this.handPosePanelElement.visible = this.leftController.visible;
+      this.handPosePanelElement.handPose = this.leftHandPose;
+    } else {
+      this.handPosePanelElement.visible = this.rightController.visible;
+      this.handPosePanelElement.handPose = this.rightHandPose;
+    }
+  }
+
+  setHandPosePanelElement(element: HTMLElement) {
+    if (this.handPosePanelElement) {
+      this.handPosePanelElement.removeEventListener(
+        SimulatorHandPoseChangeRequestEvent.type,
+        this.onHandPoseChangeRequest
+      );
+    }
+    element.addEventListener(
+      SimulatorHandPoseChangeRequestEvent.type,
+      this.onHandPoseChangeRequest
+    );
+    this.handPosePanelElement = element as SimulatorHandPoseHTMLElement;
+    this.updateHandPosePanel();
+  }
+
+  dispose() {
+    this.handPosePanelElement?.removeEventListener(
+      SimulatorHandPoseChangeRequestEvent.type,
+      this.onHandPoseChangeRequest
+    );
+    this.handPosePanelElement = undefined;
+    this.onHandednessChanged = undefined;
+    disposeObjectChildren(this.leftController);
+    disposeObjectChildren(this.rightController);
+    this.leftController.removeFromParent();
+    this.rightController.removeFromParent();
+    this.leftHand = undefined;
+    this.rightHand = undefined;
+    this.leftHandBones.length = 0;
+    this.rightHandBones.length = 0;
+    this.physics = undefined;
+    this.camera = undefined;
+    this.simulatorOptions = undefined;
+  }
+
+  onHandPoseChangeRequest = (event: Event) => {
+    if (event.type != SimulatorHandPoseChangeRequestEvent.type) return;
+    const handPoseChangeEvent = event as SimulatorHandPoseChangeRequestEvent;
+    if (this.simulatorControllerState.currentControllerIndex === 0) {
+      this.setLeftHandLerpPose(handPoseChangeEvent.pose);
+    } else {
+      this.setRightHandLerpPose(handPoseChangeEvent.pose);
+    }
+  };
+
+  toggleHandedness() {
+    this.simulatorControllerState.currentControllerIndex =
+      (this.simulatorControllerState.currentControllerIndex + 1) % 2;
+    this.updateHandPosePanel();
+    this.onHandednessChanged?.(
+      this.simulatorControllerState.currentControllerIndex === 0
+        ? 'left'
+        : 'right'
+    );
+  }
+
+  /** Optional callback fired after the active hand changes. */
+  onHandednessChanged?: (handedness: 'left' | 'right') => void;
+}

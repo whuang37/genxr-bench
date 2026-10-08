@@ -1,0 +1,75 @@
+diff --git a/docs/manual/Interaction.md b/docs/manual/Interaction.md
+index e56468cc73f5cdcdc9b06a52b0223492d50805c1..f4f08d57d8973afdd76bac6bd5bf7ce2e4ad3e96 100644
+--- a/docs/manual/Interaction.md
++++ b/docs/manual/Interaction.md
+@@ -220,9 +220,9 @@ manipulation is allowed.
+ 
+ ## Placement scripts during manipulation
+ 
+-XR Blocks pauses direct `TransformScript` children while an owner is actively
+-manipulated. This prevents a follow, face, or orbit update from fighting the
+-user's transform.
++XR Blocks suspends direct `TransformScript` children of a manipulation owner.
++It resumes and rebases them after end or cancel. This prevents a follow, face,
++or orbit update from fighting the user's transform.
+ 
+ Read [Placement scripts](Placement.md) for supported combinations, suspension,
+ manual rebasing, and one-time surface placement.
+diff --git a/docs/manual/Placement.md b/docs/manual/Placement.md
+index 26ed9d1bd3f6d5c58997690133cb7586ae563ba1..04bd501af85dff8d16d2788f4477dd1e9f40cca9 100644
+--- a/docs/manual/Placement.md
++++ b/docs/manual/Placement.md
+@@ -273,7 +273,7 @@ replace the scale from another per-frame script while the transition runs.
+ 
+ Placement scripts work with automatic object manipulation. XR Blocks suspends
+ the direct `TransformScript` children while the user manipulates their parent.
+-The scripts do not update while that manipulation is active.
++It resumes them when the manipulation ends or is canceled.
+ 
+ ```js
+ const card = new xb.UICard({
+@@ -287,8 +287,23 @@ const follow = new xb.FollowHead({
+ card.add(follow);
+ ```
+ 
+-After manipulation ends, automatic placement continues according to each
+-script's normal public configuration.
++On resume, scripts that track a spatial relationship use the manipulated pose
++as their new baseline:
++
++- `FollowHead` captures a new camera-space offset.
++- `FollowObject` captures new world position and rotation offsets.
++- `Orbit` restarts from the manipulated position and refreshes overlap bounds.
++- `FaceCamera` resumes facing the camera.
++- `VisibilityTransition` continues to use its visibility transition state.
++
++You can use the same behavior for a transform that your application controls.
++Suspend the script, move the object, and then resume it.
++
++```js
++follow.suspend();
++card.position.set(0.4, 1.4, -1);
++follow.resume(); // Preserve this pose as the new follow relationship.
++```
+ 
+ ## Combine scripts safely
+ 
+diff --git a/src/placement/TransformScript.ts b/src/placement/TransformScript.ts
+index 7e5f9dad32fcbd321f19bae64b6591535f6aa9a6..a05545d02a372de23a8fb40594f21beded1c3a1d 100644
+--- a/src/placement/TransformScript.ts
++++ b/src/placement/TransformScript.ts
+@@ -8,12 +8,12 @@ export class TransformScript extends Script {
+ 
+   /** Stops transform updates while the parent is manipulated. */
+   suspend() {
+-    this.rebase();
+     this.suspended = true;
+   }
+ 
+-  /** Restarts transform updates after manipulation. */
++  /** Rebases the script on the parent's current pose and resumes updates. */
+   resume() {
++    this.rebase();
+     this.suspended = false;
+   }
+ 

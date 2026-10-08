@@ -1,0 +1,16 @@
+diff --git a/src/utils/ModelLoader.ts b/src/utils/ModelLoader.ts
+index 58d6491bfc489d4128b6975aae8fffc6416c627e..302b10c18878698a0d7fae1359c79ee65b12885e 100644
+--- a/src/utils/ModelLoader.ts
++++ b/src/utils/ModelLoader.ts
+@@ -112,10 +112,9 @@ export class ModelLoader {
+   async loadSplat({url = ''}) {
+     const {SplatMesh} = await import('@sparkjsdev/spark'); // Dynamic import
+     const splatMesh = new SplatMesh({url});
+-    const boundingBox = splatMesh.getBoundingBox(false);
+     await splatMesh.initialized;
+     return Object.assign(splatMesh, {
+-      boundingBox,
++      boundingBox: splatMesh.getBoundingBox(false),
+     });
+   }
+ 

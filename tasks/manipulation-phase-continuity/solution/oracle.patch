@@ -1,0 +1,81 @@
+diff --git a/docs/manual/Interaction.md b/docs/manual/Interaction.md
+index 1cb1235e595f1362bc733c08d31bd48123bcc89e..f4f08d57d8973afdd76bac6bd5bf7ce2e4ad3e96 100644
+--- a/docs/manual/Interaction.md
++++ b/docs/manual/Interaction.md
+@@ -208,7 +208,9 @@ Manipulation state is stored per owner, not in one global drag slot:
+ - different sources can manipulate different objects at the same time;
+ - one source has only one active role;
+ - a second source can join one active scale-enabled owner for two-source scale;
+-- ending one source finishes the action that used that source;
++- the first source remains the primary owner of that session;
++- releasing the auxiliary source ends scale and resumes the primary configured
++  action when one exists;
+ - hiding, removing, reparenting, disabling, or invalidating an active owner
+   cancels its session.
+ 
+@@ -218,9 +220,9 @@ manipulation is allowed.
+ 
+ ## Placement scripts during manipulation
+ 
+-XR Blocks pauses direct `TransformScript` children while an owner is actively
+-manipulated. This prevents a follow, face, or orbit update from fighting the
+-user's transform.
++XR Blocks suspends direct `TransformScript` children of a manipulation owner.
++It resumes and rebases them after end or cancel. This prevents a follow, face,
++or orbit update from fighting the user's transform.
+ 
+ Read [Placement scripts](Placement.md) for supported combinations, suspension,
+ manual rebasing, and one-time surface placement.
+diff --git a/src/interaction/manipulation/ManipulationManager.ts b/src/interaction/manipulation/ManipulationManager.ts
+index eb5743a1cb764842cd15e054c67e54cf4a5da990..6524ea4723712bc1115bb6b4cc71e93ffd462f3a 100644
+--- a/src/interaction/manipulation/ManipulationManager.ts
++++ b/src/interaction/manipulation/ManipulationManager.ts
+@@ -52,7 +52,6 @@ interface Session {
+   config: NormalizedManipulationConfig;
+   primary: PrimaryRole;
+   primaryAction?: ResolvedManipulationAction;
+-  primaryBaseline?: PhaseBaseline;
+   auxiliary?: InteractionSourceState;
+   phase?: ActivePhase;
+   cardEdge?: true;
+@@ -191,7 +190,6 @@ export class ManipulationManager {
+       ? this.captureBaseline(session, session.primaryAction)
+       : undefined;
+     if (session.primaryAction && !baseline) return false;
+-    session.primaryBaseline = baseline;
+ 
+     this.sessions.set(session.owner, session);
+     suspendTransformScripts(session.owner);
+@@ -446,6 +444,14 @@ export class ManipulationManager {
+     }
+   }
+ 
++  private startPhase(
++    session: Session,
++    action: ResolvedManipulationAction
++  ): boolean {
++    const baseline = this.captureBaseline(session, action);
++    return baseline ? this.beginPhase(session, action, baseline) : false;
++  }
++
+   private beginPhase(
+     session: Session,
+     action: ResolvedManipulationAction,
+@@ -518,16 +524,7 @@ export class ManipulationManager {
+     }
+     if (!session.primaryAction) return;
+     try {
+-      if (
+-        session.primaryBaseline &&
+-        this.beginPhase(
+-          session,
+-          session.primaryAction,
+-          session.primaryBaseline
+-        )
+-      ) {
+-        return;
+-      }
++      if (this.startPhase(session, session.primaryAction)) return;
+     } catch (error) {
+       this.removeSession(session, true);
+       throw error;

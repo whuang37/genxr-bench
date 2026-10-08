@@ -1,0 +1,146 @@
+diff --git a/src/world/shared/MediaPipeVisionWorker.ts b/src/world/shared/MediaPipeVisionWorker.ts
+index 8300891b2880123aec84145fc1367fdc2491cd49..0d65c5f02bf0b292b1501d909f78acaefc7fb641 100644
+--- a/src/world/shared/MediaPipeVisionWorker.ts
++++ b/src/world/shared/MediaPipeVisionWorker.ts
+@@ -92,6 +92,14 @@ self.onmessage = async (event) => {
+ };
+ `;
+ 
++type WorkerRequest =
++  | {type: 'init'; config: MediaPipeWorkerInitConfig}
++  | {type: 'detect'; imageBitmap: ImageBitmap};
++
++type WorkerSuccessReply = {id: number; ok: true; result?: unknown};
++type WorkerErrorReply = {id: number; ok: false; error: string};
++type WorkerReply = WorkerSuccessReply | WorkerErrorReply;
++
+ /**
+  * Runs a single MediaPipe vision task in a dedicated web worker.
+  *
+@@ -101,12 +109,18 @@ self.onmessage = async (event) => {
+  * depth mesh and camera matrices.
+  */
+ export class MediaPipeVisionWorkerClient {
++  private worker: Worker | null = null;
++  private workerUrl: string | null = null;
++  private nextRequestId = 0;
++  private pendingRequests = new Map<
++    number,
++    {resolve: (value: WorkerReply) => void; reject: (error: Error) => void}
++  >();
++
+   /**
+    * @param label - Name used in error messages, e.g. `MediaPipeFaceBackend`.
+    */
+-  constructor(label: string) {
+-    void label;
+-  }
++  constructor(private label: string) {}
+ 
+   /** Whether this environment can host the worker at all. */
+   static isSupported(): boolean {
+@@ -119,8 +133,34 @@ export class MediaPipeVisionWorkerClient {
+    * @param config - Module URLs and task options for the worker.
+    */
+   async init(config: MediaPipeWorkerInitConfig): Promise<void> {
+-    void config;
+-    throw new Error('Perception worker correlation is not implemented.');
++    if (this.worker) {
++      return;
++    }
++    if (!MediaPipeVisionWorkerClient.isSupported()) {
++      throw new Error('Web Workers are not available in this environment');
++    }
++
++    const blob = new Blob([MEDIA_PIPE_VISION_WORKER_SOURCE], {
++      type: 'text/javascript',
++    });
++    this.workerUrl = URL.createObjectURL(blob);
++    this.worker = new Worker(this.workerUrl);
++    this.worker.onmessage = (event: MessageEvent<WorkerReply>) => {
++      const {id} = event.data;
++      const pending = this.pendingRequests.get(id);
++      if (!pending) return;
++      this.pendingRequests.delete(id);
++      if (event.data.ok) {
++        pending.resolve(event.data);
++      } else {
++        pending.reject(new Error(event.data.error || 'worker error'));
++      }
++    };
++    this.worker.onerror = (event) => {
++      console.error(`${this.label} worker errored:`, event.message);
++    };
++
++    await this.send({type: 'init', config});
+   }
+ 
+   /**
+@@ -134,12 +174,64 @@ export class MediaPipeVisionWorkerClient {
+    * @returns The raw task result, or null when the pass could not run.
+    */
+   async detect(imageData: ImageData): Promise<unknown> {
+-    void imageData;
+-    throw new Error('Perception worker correlation is not implemented.');
++    if (!this.worker) {
++      return null;
++    }
++
++    let bitmap: ImageBitmap;
++    try {
++      bitmap = await createImageBitmap(imageData);
++    } catch (error: unknown) {
++      console.error(`${this.label}: failed to create ImageBitmap:`, error);
++      return null;
++    }
++
++    try {
++      const reply = (await this.send({type: 'detect', imageBitmap: bitmap}, [
++        bitmap,
++      ])) as WorkerSuccessReply;
++      return reply.result ?? null;
++    } catch (error: unknown) {
++      console.error(`${this.label}: worker detection failed:`, error);
++      return null;
++    }
+   }
+ 
+   /**
+    * Terminates the worker and revokes its Blob URL. Safe to call repeatedly.
+    */
+-  dispose() {}
++  dispose() {
++    if (this.worker) {
++      this.worker.terminate();
++      this.worker = null;
++    }
++    if (this.workerUrl) {
++      URL.revokeObjectURL(this.workerUrl);
++      this.workerUrl = null;
++    }
++    // Reject anything still in flight so awaiting callers don't hang forever.
++    for (const {reject} of this.pendingRequests.values()) {
++      reject(new Error(`${this.label} disposed`));
++    }
++    this.pendingRequests.clear();
++  }
++
++  /**
++   * Promise-wraps one request/response round trip. The worker echoes the
++   * request id back so overlapping calls stay correlated.
++   */
++  private send(
++    payload: WorkerRequest,
++    transfer: Transferable[] = []
++  ): Promise<WorkerReply> {
++    const worker = this.worker;
++    if (!worker) {
++      return Promise.reject(new Error('worker not spawned'));
++    }
++    const id = this.nextRequestId++;
++    return new Promise<WorkerReply>((resolve, reject) => {
++      this.pendingRequests.set(id, {resolve, reject});
++      worker.postMessage({id, ...payload}, transfer);
++    });
++  }
+ }

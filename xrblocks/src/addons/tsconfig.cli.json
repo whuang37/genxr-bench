@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "types": ["node"],
+    "paths": {
+      "rapier3d": ["../../node_modules/@dimforge/rapier3d/rapier"],
+      "xrblocks": ["../xrblocks.ts"]
+    }
+  },
+  "include": ["**/cli/**/*.ts"]
+}

@@ -1,0 +1,154 @@
+diff --git a/src/depth/Depth.ts b/src/depth/Depth.ts
+index 1dd3e646c467b63c5902884c490996ad61611b5b..16a8a531a8bf0a333a0462dca563387e2871cbcb 100644
+--- a/src/depth/Depth.ts
++++ b/src/depth/Depth.ts
+@@ -107,6 +107,10 @@ export class Depth {
+         this.depthTextures
+       );
+       registry.register(this.depthMesh);
++      if (this.options.depthMesh.renderShadow) {
++        this.renderer.shadowMap.enabled = true;
++        this.renderer.shadowMap.type = THREE.PCFShadowMap;
++      }
+       scene.add(this.depthMesh);
+     }
+ 
+diff --git a/src/depth/DepthMesh.ts b/src/depth/DepthMesh.ts
+index 29a49a3a6f191f07c50d441b7c368c3405ec6386..409250a6117ff03c8f747660e1a0c66e53fa4554 100644
+--- a/src/depth/DepthMesh.ts
++++ b/src/depth/DepthMesh.ts
+@@ -99,10 +99,11 @@ export class DepthMesh extends MeshScript {
+         transparent: true,
+       });
+     } else {
+-      material = new THREE.MeshBasicMaterial();
++      material = new THREE.ShadowMaterial({opacity: options.shadowOpacity});
++      material.depthWrite = false;
+     }
+ 
+-    material.visible = options.showDebugTexture;
++    material.visible = options.showDebugTexture || options.renderShadow;
+     super(geometry, material);
+ 
+     this.visible = true;
+@@ -112,8 +113,10 @@ export class DepthMesh extends MeshScript {
+     this.updateVertexNormals = options.updateVertexNormals;
+     this.colliderUpdateFps = options.colliderUpdateFps;
+     this.depthTextureMaterialUniforms = uniforms;
+-    if (options.renderShadow)
+-      throw new Error('Depth mesh shadows are not implemented.');
++    if (options.renderShadow) {
++      this.receiveShadow = true;
++      this.castShadow = false;
++    }
+ 
+     // Create a downsampled geometry for raycasts and physics.
+     if (options.useDownsampledGeometry) {
+diff --git a/src/lighting/Lighting.ts b/src/lighting/Lighting.ts
+index b0041f34d578cc11a237bb62db94a12b2e9ed231..e8cd48a4b4b050cae752cb81bf34d3d2ad846044 100644
+--- a/src/lighting/Lighting.ts
++++ b/src/lighting/Lighting.ts
+@@ -1,7 +1,7 @@
+ import * as THREE from 'three';
+ import {XREstimatedLight} from 'three/addons/webxr/XREstimatedLight.js';
+ 
+-import type {Depth} from '../depth/Depth.js';
++import {Depth} from '../depth/Depth.js';
+ 
+ import {LightingOptions} from './LightingOptions.js';
+ 
+@@ -22,10 +22,14 @@ export class Lighting {
+   ambientProbe = new THREE.LightProbe();
+   /** Ambient RGB light. */
+   ambientLight = new THREE.Vector3();
++  /** Opacity of cast shadow. */
++  private shadowOpacity = 0.0;
+   /** Light group to attach to scene. */
+   private lightGroup = new THREE.Group();
+   /** Lighting options. Set during initialiation.*/
+   private options!: LightingOptions;
++  /** Depth manager. Used to get depth mesh on which to cast shadow. */
++  private depth?: Depth;
+   /** Flag to indicate if simulator is running. Controlled by Core. */
+   simulatorRunning = false;
+ 
+@@ -55,13 +59,37 @@ export class Lighting {
+     depth?: Depth
+   ) {
+     this.options = lightingOptions;
+-    void depth;
++    this.depth = depth;
+ 
+     if (this.options.enabled) {
+       this.xrLight = new XREstimatedLight(renderer);
+ 
+       if (this.options.castDirectionalLightShadow) {
+-        throw new Error('Depth mesh shadows are not implemented.');
++        renderer.shadowMap.enabled = true;
++        renderer.shadowMap.type = THREE.PCFShadowMap;
++      }
++
++      if (this.options.castDirectionalLightShadow) {
++        const dirLight = this.dirLight;
++        dirLight.castShadow = true;
++        dirLight.shadow.mapSize.width = 2048;
++        dirLight.shadow.mapSize.height = 2048;
++        dirLight.shadow.camera.near = 0.3;
++        dirLight.shadow.camera.far = 50.0;
++        const cameraFrustrumRadius = 4.0;
++        dirLight.shadow.camera.left = -cameraFrustrumRadius;
++        dirLight.shadow.camera.right = cameraFrustrumRadius;
++        dirLight.shadow.camera.top = cameraFrustrumRadius;
++        dirLight.shadow.camera.bottom = -cameraFrustrumRadius;
++        dirLight.shadow.blurSamples = 25;
++        dirLight.shadow.radius = 5.0;
++        dirLight.shadow.bias = 0.0;
++
++        this.lightGroup.add(dirLight.target);
++
++        if (this.options.debugging || DEBUGGING) {
++          scene.add(new THREE.CameraHelper(dirLight.shadow.camera));
++        }
+       }
+ 
+       if (this.options.useAmbientSH) {
+@@ -120,7 +148,38 @@ export class Lighting {
+         this.options.castDirectionalLightShadow &&
+         this.options.useDynamicSoftShadow
+       ) {
+-        throw new Error('Dynamic depth mesh shadows are not implemented.');
++        const ambientLightIntensity = this.ambientLight;
++        const ambientMonoIntensity =
++          0.21 * ambientLightIntensity.x +
++          0.72 * ambientLightIntensity.y +
++          0.07 * ambientLightIntensity.z;
++        const mainLightIntensity = new THREE.Vector3(
++          this.dirLight.color.r,
++          this.dirLight.color.g,
++          this.dirLight.color.b
++        ).multiplyScalar(this.dirLight.intensity);
++        const mainMonoIntensity =
++          0.21 * mainLightIntensity.x +
++          0.72 * mainLightIntensity.y +
++          0.07 * mainLightIntensity.z;
++        const ambientToMain = ambientMonoIntensity / mainMonoIntensity;
++        this.dirLight.shadow.radius = Math.min(
++          Math.max(1.0, ambientToMain * 30),
++          10.0
++        );
++        this.shadowOpacity = Math.max(
++          Math.min((10.0 - ambientToMain * 30) * 0.7, 0.7),
++          0.3
++        );
++
++        // Override depth material opacity with shadowOpacity
++        if (
++          this.depth?.options?.enabled &&
++          this.depth.options.depthMesh.enabled &&
++          this.depth.depthMesh?.material instanceof THREE.ShadowMaterial
++        ) {
++          this.depth.depthMesh.material.opacity = this.shadowOpacity;
++        }
+       }
+     }
+ 

@@ -1,0 +1,62 @@
+diff --git a/src/interaction/Interaction.ts b/src/interaction/Interaction.ts
+index 9ae27ee919bee08b7ac059ae868803a521fb2bd0..cd93268a04c2b2ff4bbf64a221d44be637b52212 100644
+--- a/src/interaction/Interaction.ts
++++ b/src/interaction/Interaction.ts
+@@ -100,7 +100,6 @@ export class Interaction {
+   private readonly captures = new Map<Controller, ActiveCapture>();
+   private readonly exclusiveControls = new Map<THREE.Object3D, Controller>();
+   private readonly touches = new Map<Controller, TouchState>();
+-  private readonly pointerModalities = new Map<Controller, 'direct-touch'>();
+   private readonly suppressedUntilRelease = new Set<Controller>();
+   private readonly scaleIntents = new Map<Controller, number>();
+   private raycastMode: RaycastMode;
+@@ -182,7 +181,6 @@ export class Interaction {
+       const snapshot = this.updateRay(input, deltaSeconds, deliberate);
+       if (snapshot) snapshots.push(snapshot);
+     }
+-    this.reconcilePointerModalities();
+     for (const [controller, factor] of this.scaleIntents) {
+       this.applyScaleIntent(controller, factor);
+     }
+@@ -227,7 +225,6 @@ export class Interaction {
+       this.removeSource(controller, 'source-lost');
+     }
+     this.directTouch.clear();
+-    this.pointerModalities.clear();
+     this.frameSnapshots.length = 0;
+     this.rawIntersections.clear();
+     this.frameSources.clear();
+@@ -290,7 +287,6 @@ export class Interaction {
+     this.gazeDwell.remove(controller);
+     this.suppressedUntilRelease.delete(controller);
+     this.scaleIntents.delete(controller);
+-    this.pointerModalities.delete(controller);
+   }
+ 
+   getSourceSnapshot(
+@@ -416,7 +412,7 @@ export class Interaction {
+     deltaSeconds: number,
+     deliberate: boolean
+   ): InteractionSourceState | undefined {
+-    if (this.pointerModalities.has(input.controller)) {
++    if (this.directTouch.has(input.controller)) {
+       this.clearResolvedRay(input.controller);
+       this.reticle.clear(input.controller);
+       return undefined;
+@@ -470,16 +466,6 @@ export class Interaction {
+     return snapshot;
+   }
+ 
+-  private reconcilePointerModalities(): void {
+-    for (const controller of this.frameSources) {
+-      if (this.directTouch.has(controller)) {
+-        this.pointerModalities.set(controller, 'direct-touch');
+-      } else {
+-        this.pointerModalities.delete(controller);
+-      }
+-    }
+-  }
+-
+   private collectIntersections(
+     input: RaySourceInput,
+     previousSelected: boolean

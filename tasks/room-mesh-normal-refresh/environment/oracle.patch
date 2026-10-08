@@ -1,0 +1,12 @@
+diff --git a/src/world/mesh/DetectedMesh.ts b/src/world/mesh/DetectedMesh.ts
+index e924232f13a74ed446ebb9f91da44ca666c93f68..bdee82212b7932b7a68f3a7749585918b3fef6f3 100644
+--- a/src/world/mesh/DetectedMesh.ts
++++ b/src/world/mesh/DetectedMesh.ts
+@@ -82,6 +82,7 @@ export class DetectedMesh extends THREE.Mesh {
+         }
+       }
+ 
++      this.geometry.computeVertexNormals();
+     }
+ 
+     // Update collider

@@ -1,0 +1,437 @@
+diff --git a/src/core/Core.ts b/src/core/Core.ts
+index 1aea86ecba8c607a51f15e4a1376c132916efd11..f308d5e3e0237f71d4c5e6cb944f71d6a114860b 100644
+--- a/src/core/Core.ts
++++ b/src/core/Core.ts
+@@ -113,6 +113,10 @@ export class Core {
+ 
+   private renderSceneCallback = (cameraOverride?: THREE.Camera) =>
+     this.renderScene(cameraOverride);
++  private renderSceneForCaptureCallback = () => {
++    this.renderScene();
++    this.uiRenderer.renderScreenOverlays();
++  };
+ 
+   /** The desktop XR simulator after its runtime chunk has loaded. */
+   simulator?: Simulator;
+@@ -800,12 +804,13 @@ export class Core {
+     this.renderSimulatorAndScene();
+     this.screenshotSynthesizer.onAfterRender(
+       this.renderer,
+-      this.renderSceneCallback,
++      this.renderSceneForCaptureCallback,
+       this.deviceCamera
+     );
+     if (this.simulatorRunning) {
+       this.simulator?.renderSimulatorScene();
+     }
++    this.uiRenderer.renderScreenOverlays();
+   };
+ 
+   /**
+diff --git a/src/ui/components/UIOverlay.ts b/src/ui/components/UIOverlay.ts
+index 0f3d715286dd535f8db379d133e2c7aa14d242ce..7e012572b680872408f97d795a8935350ea59d54 100644
+--- a/src/ui/components/UIOverlay.ts
++++ b/src/ui/components/UIOverlay.ts
+@@ -22,6 +22,7 @@ export class UIOverlay<
+   constructor({
+     appearance = 'surface',
+     compositing = 'direct',
++    pointerEvents,
+     ...options
+   }: UIOverlayOptions = {}) {
+     validateUIAppearance(appearance);
+@@ -30,7 +31,17 @@ export class UIOverlay<
+         `Invalid UI overlay compositing "${String(compositing)}".`
+       );
+     }
+-    super('overlay', options);
++    if (
++      compositing === 'screen' &&
++      pointerEvents !== undefined &&
++      pointerEvents !== 'none'
++    ) {
++      throw new Error('Screen-composited UI overlays cannot receive input.');
++    }
++    super('overlay', {
++      ...options,
++      pointerEvents: compositing === 'screen' ? 'none' : pointerEvents,
++    });
+     this.appearance = appearance;
+     this.compositing = compositing;
+   }
+diff --git a/src/ui/internal/UIOverlayCompositor.ts b/src/ui/internal/UIOverlayCompositor.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..579ed3838768643b53a4f23b32aed8aa49e95b3e
+--- /dev/null
++++ b/src/ui/internal/UIOverlayCompositor.ts
+@@ -0,0 +1,219 @@
++import * as THREE from 'three';
++import {FullScreenQuad} from 'three/addons/postprocessing/Pass.js';
++
++interface ViewportSize {
++  width: number;
++  height: number;
++}
++
++interface RendererState {
++  activeCubeFace: number;
++  activeMipmapLevel: number;
++  autoClear: boolean;
++  clearAlpha: number;
++  renderTarget: THREE.WebGLRenderTarget | null;
++  scissor: THREE.Vector4;
++  scissorTest: boolean;
++  viewport: THREE.Vector4;
++  xrPresenting: boolean;
++}
++
++/** Renders screen overlays offscreen, then blends them over the world. */
++export class UIOverlayCompositor {
++  private readonly sourceScene = new THREE.Scene();
++  private readonly sourceCamera = new THREE.OrthographicCamera(
++    -1,
++    1,
++    1,
++    -1,
++    0.01,
++    10
++  );
++  private readonly displayMaterial = new THREE.ShaderMaterial({
++    name: 'XR Blocks screen overlay composite',
++    uniforms: {overlayTexture: {value: null}},
++    vertexShader: /* glsl */ `
++      varying vec2 vUv;
++
++      void main() {
++        vUv = uv;
++        gl_Position = vec4(position.xy, 0.0, 1.0);
++      }
++    `,
++    fragmentShader: /* glsl */ `
++      uniform sampler2D overlayTexture;
++      varying vec2 vUv;
++
++      void main() {
++        gl_FragColor = texture2D(overlayTexture, vUv);
++        #include <tonemapping_fragment>
++        #include <colorspace_fragment>
++      }
++    `,
++    transparent: true,
++    depthTest: false,
++    depthWrite: false,
++    blending: THREE.CustomBlending,
++    blendSrc: THREE.OneFactor,
++    blendDst: THREE.OneMinusSrcColorFactor,
++    blendEquation: THREE.AddEquation,
++  });
++  private readonly displayQuad = new FullScreenQuad(this.displayMaterial);
++  private readonly drawingBufferSize = new THREE.Vector2();
++  private readonly savedClearColor = new THREE.Color();
++  private renderTarget?: THREE.WebGLRenderTarget;
++
++  constructor() {
++    this.sourceScene.name = 'XR Blocks screen overlay source';
++    this.sourceCamera.position.set(0, 0, 1);
++  }
++
++  add(source: THREE.Object3D): void {
++    this.sourceScene.add(source);
++  }
++
++  /** Returns the logical viewport used to lay out one presented view. */
++  getLayoutViewport(
++    renderer: THREE.WebGLRenderer,
++    viewport: ViewportSize
++  ): ViewportSize {
++    const viewSize = this.getXRViewSize(renderer);
++    if (!viewSize) return viewport;
++    const height = Math.max(1, viewport.height);
++    return {
++      width: height * (viewSize.width / viewSize.height),
++      height,
++    };
++  }
++
++  render(renderer: THREE.WebGLRenderer, viewport: ViewportSize): void {
++    if (!this.hasVisibleSource()) return;
++
++    const state = this.captureRendererState(renderer);
++    const targetSize = this.getTargetSize(renderer, state.renderTarget);
++    const target = this.ensureRenderTarget(targetSize.width, targetSize.height);
++    this.updateSourceCamera(viewport);
++
++    try {
++      renderer.xr.isPresenting = false;
++      renderer.autoClear = false;
++      renderer.setRenderTarget(target);
++      renderer.setViewport(0, 0, target.width, target.height);
++      renderer.setScissor(0, 0, target.width, target.height);
++      renderer.setScissorTest(false);
++      renderer.setClearColor(0x000000, 0);
++      renderer.clear(true, false, false);
++      renderer.render(this.sourceScene, this.sourceCamera);
++
++      this.restoreRendererState(renderer, state);
++      renderer.autoClear = false;
++      this.displayQuad.render(renderer);
++    } finally {
++      this.restoreRendererState(renderer, state);
++    }
++  }
++
++  dispose(): void {
++    this.renderTarget?.dispose();
++    this.renderTarget = undefined;
++    this.displayQuad.dispose();
++    this.displayMaterial.dispose();
++    this.sourceScene.clear();
++  }
++
++  private captureRendererState(renderer: THREE.WebGLRenderer): RendererState {
++    renderer.getClearColor(this.savedClearColor);
++    return {
++      activeCubeFace: renderer.getActiveCubeFace(),
++      activeMipmapLevel: renderer.getActiveMipmapLevel(),
++      autoClear: renderer.autoClear,
++      clearAlpha: renderer.getClearAlpha(),
++      renderTarget: renderer.getRenderTarget(),
++      scissor: renderer.getScissor(new THREE.Vector4()),
++      scissorTest: renderer.getScissorTest(),
++      viewport: renderer.getViewport(new THREE.Vector4()),
++      xrPresenting: renderer.xr.isPresenting,
++    };
++  }
++
++  private restoreRendererState(
++    renderer: THREE.WebGLRenderer,
++    state: RendererState
++  ): void {
++    renderer.xr.isPresenting = state.xrPresenting;
++    renderer.autoClear = state.autoClear;
++    renderer.setRenderTarget(
++      state.renderTarget,
++      state.activeCubeFace,
++      state.activeMipmapLevel
++    );
++    renderer.setViewport(state.viewport);
++    renderer.setScissor(state.scissor);
++    renderer.setScissorTest(state.scissorTest);
++    renderer.setClearColor(this.savedClearColor, state.clearAlpha);
++  }
++
++  private getTargetSize(
++    renderer: THREE.WebGLRenderer,
++    currentTarget: THREE.WebGLRenderTarget | null
++  ): ViewportSize {
++    const viewSize = this.getXRViewSize(renderer);
++    if (viewSize) return viewSize;
++    const size =
++      currentTarget ?? renderer.getDrawingBufferSize(this.drawingBufferSize);
++    return {
++      width: Math.max(1, Math.floor(size.width)),
++      height: Math.max(1, Math.floor(size.height)),
++    };
++  }
++
++  private getXRViewSize(renderer: THREE.WebGLRenderer): ViewportSize | null {
++    if (!renderer.xr.isPresenting) return null;
++    const cameras = renderer.xr.getCamera()
++      .cameras as readonly THREE.PerspectiveCamera[];
++    if (cameras.length === 0) return null;
++    const width = Math.max(
++      ...cameras.map((camera) => camera.viewport?.width ?? 0)
++    );
++    const height = Math.max(
++      ...cameras.map((camera) => camera.viewport?.height ?? 0)
++    );
++    return width > 0 && height > 0 ? {width, height} : null;
++  }
++
++  private ensureRenderTarget(
++    width: number,
++    height: number
++  ): THREE.WebGLRenderTarget {
++    if (!this.renderTarget) {
++      this.renderTarget = new THREE.WebGLRenderTarget(width, height, {
++        colorSpace: THREE.LinearSRGBColorSpace,
++        depthBuffer: false,
++        stencilBuffer: false,
++      });
++      this.renderTarget.texture.name = 'XR Blocks screen overlay texture';
++      this.displayMaterial.uniforms.overlayTexture.value =
++        this.renderTarget.texture;
++    } else if (
++      this.renderTarget.width !== width ||
++      this.renderTarget.height !== height
++    ) {
++      this.renderTarget.setSize(width, height);
++    }
++    return this.renderTarget;
++  }
++
++  private updateSourceCamera(viewport: ViewportSize): void {
++    const halfWidth = viewport.width * 0.0005;
++    const halfHeight = viewport.height * 0.0005;
++    this.sourceCamera.left = -halfWidth;
++    this.sourceCamera.right = halfWidth;
++    this.sourceCamera.top = halfHeight;
++    this.sourceCamera.bottom = -halfHeight;
++    this.sourceCamera.updateProjectionMatrix();
++  }
++
++  private hasVisibleSource(): boolean {
++    return this.sourceScene.children.some((source) => source.visible);
++  }
++}
+diff --git a/src/ui/internal/UIRenderer.ts b/src/ui/internal/UIRenderer.ts
+index 761f1141ec3e3680434bd03aeff5219e109fcad3..397fba0d65b3e0420d9d9422eff0ea39b25143a0 100644
+--- a/src/ui/internal/UIRenderer.ts
++++ b/src/ui/internal/UIRenderer.ts
+@@ -2,6 +2,7 @@ import * as THREE from 'three';
+ 
+ import type {Interaction} from '../../interaction/Interaction';
+ import {getSemanticControl} from '../../interaction/SemanticControl';
++import {UIOverlay} from '../components/UIOverlay';
+ import {setUIValidator, ui} from '../UI';
+ import {collectUIRoots, getUIElementKind, type UIElement} from '../UIElement';
+ import type {
+@@ -10,6 +11,7 @@ import type {
+   UIHitMapping,
+   UIMount,
+ } from './UIBackend';
++import {UIOverlayCompositor} from './UIOverlayCompositor';
+ import {
+   createUIValidationReport,
+   type UIValidationIssue,
+@@ -46,9 +48,11 @@ export class UIRenderer {
+   private readonly roots: UIElement[] = [];
+   private readonly connectedRoots = new Set<UIElement>();
+   private readonly viewport = {width: 0, height: 0};
++  private readonly screenViewport = {width: 0, height: 0};
+   private backendState: BackendState = {kind: 'idle'};
+   private renderer?: THREE.WebGLRenderer;
+   private publicScene?: THREE.Scene;
++  private compositor?: UIOverlayCompositor;
+ 
+   constructor(
+     private readonly interaction: Interaction,
+@@ -144,6 +148,12 @@ export class UIRenderer {
+     }
+   }
+ 
++  /** Renders and blends screen-composited overlays over the current target. */
++  renderScreenOverlays(): void {
++    if (!this.renderer || !this.compositor) return;
++    this.compositor.render(this.renderer, this.screenViewport);
++  }
++
+   /** Cancels hit mappings and releases one disconnected public root. */
+   release(root: UIElement): void {
+     this.unmount(root);
+@@ -158,7 +168,11 @@ export class UIRenderer {
+     this.connectedRoots.clear();
+     this.viewport.width = 0;
+     this.viewport.height = 0;
++    this.screenViewport.width = 0;
++    this.screenViewport.height = 0;
+     setUIValidator(undefined);
++    this.compositor?.dispose();
++    this.compositor = undefined;
+     this.privateRoot.removeFromParent();
+     this.publicScene = undefined;
+     this.renderer = undefined;
+@@ -202,7 +216,12 @@ export class UIRenderer {
+ 
+   private mount(root: UIElement, backend: UIBackend, order: number): void {
+     const mount = backend.createMount(root);
+-    this.privateRoot.add(mount.object);
++    if (isScreenCompositedOverlay(root)) {
++      syncCompositeRootTransform(mount.object);
++      this.ensureCompositor().add(mount.object);
++    } else {
++      this.privateRoot.add(mount.object);
++    }
+     this.mounts.set(root, {
+       root,
+       mount,
+@@ -233,8 +252,19 @@ export class UIRenderer {
+   }
+ 
+   private reconcileMounts(deltaSeconds: number, camera: THREE.Camera): void {
+-    this.viewport.width = window.innerWidth;
+-    this.viewport.height = window.innerHeight;
++    const canvas = this.renderer?.domElement;
++    this.viewport.width =
++      canvas?.clientWidth || window.innerWidth || canvas?.width || 1;
++    this.viewport.height =
++      canvas?.clientHeight || window.innerHeight || canvas?.height || 1;
++    const resolvedScreenViewport = this.compositor?.getLayoutViewport(
++      this.renderer!,
++      this.viewport
++    );
++    this.screenViewport.width =
++      resolvedScreenViewport?.width ?? this.viewport.width;
++    this.screenViewport.height =
++      resolvedScreenViewport?.height ?? this.viewport.height;
+     for (const record of this.mounts.values()) {
+       if (!record.connected) continue;
+       const visible = effectiveVisible(record.root);
+@@ -243,24 +273,35 @@ export class UIRenderer {
+       }
+       record.visible = visible;
+       record.mount.object.visible = visible;
+-      syncRootTransform(record.root, record.mount.object, camera);
++      const screenComposited = isScreenCompositedOverlay(record.root);
++      if (!screenComposited) {
++        syncRootTransform(record.root, record.mount.object, camera);
++      }
+       const mappings = record.mount.commit(
+         ui.theme,
+-        this.viewport,
++        screenComposited ? this.screenViewport : this.viewport,
+         record.order
+       );
+       if (mappings) {
+         for (const unregister of record.unregisterHits) unregister();
+         record.unregisterHits.length = 0;
+-        const overlay = getUIElementKind(record.root) === 'overlay';
+-        for (const mapping of mappings) {
+-          record.unregisterHits.push(this.registerHit(mapping, overlay));
++        if (!screenComposited) {
++          const overlay = getUIElementKind(record.root) === 'overlay';
++          for (const mapping of mappings) {
++            record.unregisterHits.push(this.registerHit(mapping, overlay));
++          }
+         }
+       }
+       record.mount.update(deltaSeconds);
+     }
+   }
+ 
++  private ensureCompositor(): UIOverlayCompositor {
++    if (this.compositor) return this.compositor;
++    this.compositor = new UIOverlayCompositor();
++    return this.compositor;
++  }
++
+   private presentationStateFor = (
+     element: UIElement,
+     cursorPoints?: readonly [THREE.Vector3, THREE.Vector3]
+@@ -336,6 +377,16 @@ export class UIRenderer {
+   }
+ }
+ 
++function isScreenCompositedOverlay(root: UIElement): root is UIOverlay {
++  return root instanceof UIOverlay && root.compositing === 'screen';
++}
++
++function syncCompositeRootTransform(renderRoot: THREE.Object3D): void {
++  renderRoot.position.set(0, 0, 0);
++  renderRoot.quaternion.identity();
++  renderRoot.scale.setScalar(0.001);
++}
++
+ function effectiveVisible(object: THREE.Object3D): boolean {
+   let current: THREE.Object3D | null = object;
+   while (current) {

@@ -1,0 +1,15 @@
+worktree: /Users/william/Code/genxr-bench/tmp/xrblocks-eval-worktrees/occlusion-pass
+branch: occlusion-pass
+broken commit: 008c40ad6bec6c127332c5b8e6e19679d0dc3c2d
+oracle ref: HEAD^
+oracle commit: 2a6be7277850a479fdba03f32720adfcd735ac9d
+broken tree: 8e314693b61bb77373c5b7379aca8aec3ff296dc
+oracle tree: 396f70e3af3a1850b0bd69a45438d05a213ee41b
+
+ src/depth/occlusion/OcclusionMapMeshMaterial.ts | 102 +++++++
+ src/depth/occlusion/OcclusionPass.ts            | 337 +++++++++++++++++++++---
+ src/depth/occlusion/OcclusionUtils.ts           |  49 +++-
+ src/depth/occlusion/kawaseblur.glsl.ts          |  98 +++++++
+ src/depth/occlusion/occlusion.glsl.ts           |  31 +++
+ src/depth/occlusion/occlusion_map.glsl.ts       |  69 +++++
+ 6 files changed, 648 insertions(+), 38 deletions(-)

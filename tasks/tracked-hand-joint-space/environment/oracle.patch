@@ -1,0 +1,58 @@
+diff --git a/docs/manual/Hands.mdx b/docs/manual/Hands.mdx
+index 2f40bedadb6af4a4ac96ba15cda2e60b10066b2a..ae4c4fe53af35136e13beb1a4adaeb8c0fababe6 100644
+--- a/docs/manual/Hands.mdx
++++ b/docs/manual/Hands.mdx
+@@ -116,16 +116,17 @@ update(time, frame) {
+   // Get wrist of hand 1 (right hand) as a THREE.Object3D
+   const rightWrist = hands.getWrist(1);
+ 
+-  if (leftIndexTip) console.log('Left index fingertip is tracked');
++  if (leftIndexTip) {
++    const worldPos = new THREE.Vector3();
++    leftIndexTip.getWorldPosition(worldPos);
++    console.log('Left Index fingertip position:', worldPos);
++  }
+ 
+   // Check if hand 0 is pinching
+   const isPinching = xb.user.isSelecting(0);
+ }
+ ```
+ 
+-For interactive contact, use the world-space `touchPosition` supplied by the
+-public touch callbacks instead of deriving a contact point in application code.
+-
+ ### Key Reference Properties
+ 
+ - **`numHands`**: Max number of supported tracking hands is `2` (indexed as `0` and `1`).
+diff --git a/skills/xb-add-interactions/references/selection-and-direct-hands.md b/skills/xb-add-interactions/references/selection-and-direct-hands.md
+index fb8f84e494c13988bbaf3728dc28105445238099..c83158ac8bbd92cdc949334bb20222f950cdfd66 100644
+--- a/skills/xb-add-interactions/references/selection-and-direct-hands.md
++++ b/skills/xb-add-interactions/references/selection-and-direct-hands.md
+@@ -47,8 +47,12 @@ Call `event.preventDefault()` during `onObjectTouchStart` when contact must not
+ start selection or automatic manipulation. Releasing a grab can end
+ manipulation while touch contact and selection continue.
+ 
+-Guard optional hand data and use the world-space `touchPosition` from public
+-touch callbacks when application logic needs the contact location.
++Guard live hand data:
++
++```js
++const tip = xb.user.hands?.getIndexTip(xb.Handedness.LEFT);
++if (tip) tip.getWorldPosition(this.worldPoint);
++```
+ 
+ Use the simulator hand controls from
+ [`../../../templates/02_object_interaction/`](../../../templates/02_object_interaction/)
+diff --git a/src/input/Input.ts b/src/input/Input.ts
+index 2d023986c3a09dd368ec4c60206221d3aed088d9..16fc4aaf9364f7b7f07c49446d6579824b9f4c34 100644
+--- a/src/input/Input.ts
++++ b/src/input/Input.ts
+@@ -492,7 +492,7 @@ export class Input {
+       }
+       input.controller = controller;
+       input.hand = this.hands[handIndex]?.joints?.wrist;
+-      input.point.copy(indexTip.position);
++      indexTip.getWorldPosition(input.point);
+       controller.getWorldQuaternion(input.orientation!);
+       input.selected = controller.userData.selected === true;
+       this.directTouchInputs.push(input);

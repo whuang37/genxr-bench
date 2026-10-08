@@ -1,0 +1,506 @@
+import {
+  DeviceCameraOptions,
+  xrDeviceCameraEnvironmentOptions,
+  xrDeviceCameraUserOptions,
+} from '../camera/CameraOptions.js';
+import {ContextOptions} from '../context/ContextOptions';
+import {DepthOptions, xrDepthMeshOptions} from '../depth/DepthOptions.js';
+import {HandsOptions} from '../input/HandsOptions.js';
+import {GestureRecognitionOptions} from '../input/gestures/GestureRecognitionOptions.js';
+import {HeadGestureRecognitionOptions} from '../input/headGestures/HeadGestureRecognitionOptions.js';
+import {StrokeRecognitionOptions} from '../input/strokes/StrokeRecognitionOptions';
+import {LightingOptions} from '../lighting/LightingOptions.js';
+import {PhysicsOptions} from '../physics/PhysicsOptions';
+import {SimulatorMode, SimulatorOptions} from '../simulator/SimulatorOptions';
+import {SoundOptions} from '../sound/SoundOptions';
+import {deepMerge} from '../utils/OptionsUtils';
+import {DeepPartial, DeepReadonly} from '../utils/Types';
+import {WorldOptions} from '../world/WorldOptions';
+import {getUrlParamBool, getUrlParameter} from '../utils/utils';
+import {Handedness} from '../input/Hands';
+
+const OPTIONAL_REFERENCE_SPACES = [
+  'local-floor',
+  'bounded-floor',
+  'unbounded',
+] as const;
+
+/**
+ * Default options for XR controllers, which encompass hands by default in
+ * Android XR, mouse input on desktop, tracked controllers, and gamepads.
+ */
+export class InputOptions {
+  /** Whether controller input is enabled. */
+  enabled = true;
+  /** Whether mouse input should act as a controller on desktop. */
+  enabledMouse = true;
+  /** Whether to enable debugging features for controllers. */
+  debug = false;
+  /** Whether to show controller models. */
+  visualization = false;
+  /** Whether to show the ray lines extending from the controllers. */
+  visualizeRays = false;
+}
+
+/**
+ * Default options for the reticle (pointing cursor).
+ */
+export class ReticleOptions {
+  enabled = true;
+  /** Whether reticles use the real-world depth mesh as a surface. */
+  projectOnDepthMesh = false;
+  /**
+   * Maximum reticle drawing distance in meters. It does not limit targeting.
+   */
+  maxDistance?: number;
+  /**
+   * Distance in meters at which to render the reticle when no valid hit is
+   * found. Set to 0 to hide the reticle on a miss.
+   */
+  defaultRenderDistance = 0;
+}
+
+export type RaycastMode = 'continuous' | 'select';
+
+export class InteractionOptions {
+  /** When to sample ray intersections for interaction. */
+  raycastMode: RaycastMode = 'continuous';
+  /** Seconds a stable object selection must be held before long-select. */
+  longSelectDuration = 0.75;
+}
+
+/**
+ * Options for the XR transition effect.
+ */
+export class XRTransitionOptions {
+  /** Whether the transition effect is enabled. */
+  enabled = false;
+  /** The duration of the transition in seconds. */
+  transitionTime = 0.5;
+  /** The default background color for VR transitions. */
+  defaultBackgroundColor = 0xffffff;
+}
+
+const FORM_FACTORS = ['auto', 'xr', 'hud', 'vr', 'desktop', 'mobile'] as const;
+export type FormFactor = (typeof FORM_FACTORS)[number];
+
+export type AutomationModeOptions = {
+  hideSimulatorUi?: boolean;
+  defaultHand?: Handedness;
+  defaultMode?: SimulatorMode;
+  enableHands?: boolean;
+  enableCamera?: boolean;
+};
+
+/**
+ * A central configuration class for the entire XR Blocks system. It aggregates
+ * all settings and provides chainable methods for enabling common features.
+ */
+export class Options {
+  /**
+   * Whether to use antialiasing.
+   */
+  antialias = true;
+  /**
+   * Whether to use a logarithmic depth buffer. Useful for depth-aware
+   * occlusions.
+   */
+  logarithmicDepthBuffer = false;
+  /**
+   * Global flag for enabling various debugging features.
+   */
+  debugging = false;
+  /**
+   * Whether to request a stencil buffer.
+   */
+  stencil = false;
+  /**
+   * Canvas element to use for rendering.
+   * If not defined, a new element will be added to document body.
+   */
+  canvas?: HTMLCanvasElement;
+
+  /**
+   * Any additional required features when initializing webxr.
+   */
+  webxrRequiredFeatures: string[] = [];
+
+  /**
+   * Any additional optional features when initializing webxr.
+   */
+  webxrOptionalFeatures: string[] = [...OPTIONAL_REFERENCE_SPACES];
+
+  // "local-floor" sets the scene origin at the user's feet,
+  // "local" sets the scene origin near their head.
+  referenceSpaceType: XRReferenceSpaceType = 'local-floor';
+
+  controllers = new InputOptions();
+  depth = new DepthOptions();
+  lighting = new LightingOptions();
+  deviceCamera = new DeviceCameraOptions();
+  hands = new HandsOptions();
+  gestures = new GestureRecognitionOptions();
+  headGestures = new HeadGestureRecognitionOptions();
+  strokes = new StrokeRecognitionOptions();
+  reticles = new ReticleOptions();
+  interaction = new InteractionOptions();
+  sound = new SoundOptions();
+  simulator = new SimulatorOptions();
+  world = new WorldOptions();
+  context = new ContextOptions();
+  physics = new PhysicsOptions();
+  transition = new XRTransitionOptions();
+  camera = {
+    near: 0.01,
+    far: 500,
+  };
+
+  /**
+   * Whether to use post-processing effects.
+   */
+  usePostprocessing = false;
+
+  enableSimulator = true;
+
+  /**
+   * Whether to catch all exceptions thrown by developer scripts in the main update loop
+   * and physics step, and log them using console.error instead of crashing the application.
+   * When enabled, exceptions in one script will not prevent other scripts or subsystems from updating.
+   */
+  catchScriptExceptions = true;
+
+  /**
+   * Configuration for the XR session button.
+   */
+  xrButton = {
+    appTitle: '',
+    appDescription: '',
+    enabled: true,
+    startText: 'Enter XR',
+    endText: 'Exit XR',
+    invalidText: 'XR Not Supported',
+    startSimulatorText: 'Enter Simulator',
+    showEnterSimulatorButton: false,
+    // Whether to autostart the simulator even if WebXR is available.
+    alwaysAutostartSimulator: false,
+  };
+
+  /**
+   * Which permissions to request before entering the XR session.
+   */
+  permissions = {
+    geolocation: false,
+    camera: false,
+    microphone: false,
+  };
+
+  xrSessionMode: XRSessionMode = 'immersive-ar';
+
+  private _formFactor: FormFactor = 'auto';
+
+  get formFactor() {
+    return this._formFactor;
+  }
+
+  /**
+   * Form factor is a preset that configures the experience for a specific
+   * device type. Currently it only controls whether the simulator is enabled
+   * and should always be autostarted.
+   */
+  set formFactor(formFactor: FormFactor) {
+    this._formFactor = formFactor;
+    this.enableSimulator =
+      formFactor === 'desktop' ||
+      formFactor === 'auto' ||
+      formFactor === 'mobile';
+    this.xrButton.alwaysAutostartSimulator = formFactor === 'desktop';
+    if (formFactor === 'vr') {
+      this.enableVR();
+    }
+  }
+
+  /**
+   * Constructs the Options object by merging default values with provided
+   * custom options.
+   * @param options - A custom options object to override the defaults.
+   */
+  constructor(options?: DeepReadonly<DeepPartial<Options>>) {
+    deepMerge(this, options);
+    this.parseUrlParams();
+  }
+
+  protected parseUrlParams() {
+    const formFactorUrlParam = getUrlParameter('formFactor');
+    if (
+      formFactorUrlParam &&
+      FORM_FACTORS.includes(formFactorUrlParam as FormFactor)
+    ) {
+      this.formFactor = formFactorUrlParam as FormFactor;
+    }
+
+    if (getUrlParamBool('xrAutomation')) {
+      this.enableAutomationMode();
+    }
+  }
+
+  /**
+   * Sets the session mode to VR and disables the simulator passthrough scene.
+   */
+  enableVR() {
+    this.xrSessionMode = 'immersive-vr';
+    return this;
+  }
+
+  /**
+   * Enables a standard simulator-driven setup for automation and external test
+   * harnesses.
+   * @returns The instance for chaining.
+   */
+  enableAutomationMode(config: AutomationModeOptions = {}) {
+    const {
+      hideSimulatorUi = true,
+      defaultHand = Handedness.RIGHT,
+      defaultMode = SimulatorMode.POSE,
+      enableHands = true,
+      enableCamera = true,
+    } = config;
+
+    this.formFactor = 'desktop';
+    this.xrButton.enabled = false;
+    this.xrButton.alwaysAutostartSimulator = true;
+
+    if (enableHands) {
+      this.enableHands();
+    }
+    if (enableCamera) {
+      this.enableCamera();
+    }
+    this.enableContext();
+
+    this.simulator.defaultMode = defaultMode;
+    this.simulator.defaultHand = defaultHand;
+
+    if (hideSimulatorUi) {
+      this.simulator.simulatorSettingsPanel.enabled = false;
+      this.simulator.handPosePanel.enabled = false;
+    }
+
+    return this;
+  }
+
+  /**
+   * Enables reticles for visualizing targets of hand rays in WebXR.
+   * @returns The instance for chaining.
+   */
+  enableReticles() {
+    this.reticles.enabled = true;
+    return this;
+  }
+
+  /**
+   * Enables depth sensing in WebXR with default options.
+   * @returns The instance for chaining.
+   */
+  enableDepth() {
+    this.depth = new DepthOptions(xrDepthMeshOptions);
+    return this;
+  }
+
+  /**
+   * Enables plane detection.
+   * @returns The instance for chaining.
+   */
+  enablePlaneDetection() {
+    this.world.enablePlaneDetection();
+    return this;
+  }
+
+  /**
+   * Enables object detection.
+   * @returns The instance for chaining.
+   */
+  enableObjectDetection() {
+    this.permissions.camera = true;
+    this.world.enableObjectDetection();
+    return this;
+  }
+
+  /**
+   * Enables human pose detection.
+   * @returns The instance for chaining.
+   */
+  enableHumanDetection() {
+    this.permissions.camera = true;
+    this.enableCamera();
+    this.enableDepth();
+    this.world.enableHumanDetection();
+    return this;
+  }
+
+  /**
+   * Enables face landmark detection. Provides 478 per-face landmarks in
+   * world space, optional 52 ARKit-style blendshape weights, and an
+   * optional rigid 4x4 facial transformation matrix per detected face.
+   * @returns The instance for chaining.
+   */
+  enableFaceDetection() {
+    this.permissions.camera = true;
+    this.enableCamera();
+    this.enableDepth();
+    this.world.enableFaceDetection();
+    return this;
+  }
+
+  /**
+   * Enables semantic segmentation. Produces per-pixel person / background
+   * category masks from the device camera (MediaPipe, on-device). Unlike face
+   * and human detection it does not require depth.
+   * @returns The instance for chaining.
+   */
+  enableSegmentation() {
+    this.permissions.camera = true;
+    this.enableCamera();
+    this.world.enableSegmentation();
+    return this;
+  }
+
+  /**
+   * Enables device camera (passthrough) with a specific facing mode.
+   * @param facingMode - The desired camera facing mode, either 'environment' or
+   *     'user'.
+   * @returns The instance for chaining.
+   */
+  enableCamera(facingMode: 'environment' | 'user' = 'environment') {
+    this.permissions.camera = true;
+    this.deviceCamera = new DeviceCameraOptions(
+      facingMode === 'environment'
+        ? xrDeviceCameraEnvironmentOptions
+        : xrDeviceCameraUserOptions
+    );
+    return this;
+  }
+
+  /**
+   * Enables hand tracking.
+   * @returns The instance for chaining.
+   */
+  enableHands() {
+    this.hands.enabled = true;
+    return this;
+  }
+
+  /**
+   * Enables the gesture recognition block and ensures hands are available.
+   * @returns The instance for chaining.
+   */
+  enableGestures() {
+    this.enableHands();
+    this.gestures.enable();
+    return this;
+  }
+
+  /**
+   * Enables completed nod and shake recognition from the user's head pose.
+   * @returns The instance for chaining.
+   */
+  enableHeadGestures() {
+    this.headGestures.enable();
+    return this;
+  }
+
+  /**
+   * Enables the stroke recognition block and ensures gestures are available.
+   * @returns The instance for chaining.
+   */
+  enableStrokes() {
+    this.enableGestures();
+    this.strokes.enable();
+    return this;
+  }
+
+  /**
+   * Enables the visualization of rays for hand tracking.
+   * @returns The instance for chaining.
+   */
+  enableHandRays() {
+    this.controllers.visualizeRays = true;
+    return this;
+  }
+
+  /**
+   * Enables agent-facing context detectors such as semantic trees,
+   * view visibility, and Set-of-Mark observations.
+   * @returns The instance for chaining.
+   */
+  enableContext() {
+    this.context.enable();
+    return this;
+  }
+
+  /**
+   * Enables agent-facing scene context.
+   * @returns The instance for chaining.
+   */
+  enableSceneContext() {
+    this.context.enableScene();
+    return this;
+  }
+
+  /**
+   * Enables agent-facing visible objects context.
+   * @returns The instance for chaining.
+   */
+  enableVisibleObjectsContext() {
+    this.context.enableVisibleObjects();
+    return this;
+  }
+
+  /**
+   * Enables agent-facing Set-of-Mark context.
+   * @returns The instance for chaining.
+   */
+  enableSetOfMarkContext() {
+    this.context.enableSetOfMark();
+    return this;
+  }
+
+  /**
+   * Enables the XR transition component for toggling VR.
+   * @returns The instance for chaining.
+   */
+  enableXRTransitions() {
+    this.transition.enabled = true;
+    return this;
+  }
+
+  /**
+   * Enables input from hands and controllers.
+   * Note that this is enabled by default and can also be changed at runtime with
+   * xb.core.input.enableControllers() and xb.core.input.disableControllers().
+   * @returns The instance for chaining.
+   */
+  enableControllers() {
+    this.controllers.enabled = true;
+    return this;
+  }
+
+  /**
+   * Sets the title of the app to be displayed above the XR button.
+   * @param title - The title of the app.
+   * @returns The instance for chaining.
+   */
+  setAppTitle(title: string) {
+    this.xrButton.appTitle = title;
+    return this;
+  }
+
+  /**
+   * Sets the description of the app to be displayed above the XR button.
+   * @param description - The description of the app.
+   * @returns The instance for chaining.
+   */
+  setAppDescription(description: string) {
+    this.xrButton.appDescription = description;
+    return this;
+  }
+}

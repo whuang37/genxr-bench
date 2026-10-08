@@ -1,0 +1,846 @@
+diff --git a/docs/manual/HandGestures.md b/docs/manual/HandGestures.md
+index 1baaeb7345fdddd4b09c6aea92d928e1b45dab96..8bd1d100c77611bdec4a30d334775411957570ea 100644
+--- a/docs/manual/HandGestures.md
++++ b/docs/manual/HandGestures.md
+@@ -148,7 +148,29 @@ const recognizer = new xb.HeuristicGestureRecognizer();
+ 
+ recognizer.registerGesture(
+   'victory',
+-  detectVictoryGesture,
++  (context, config) => {
++    const indexStraight = xb.getFingerStraightness(context, 'index');
++    const middleStraight = xb.getFingerStraightness(context, 'middle');
++    const ringCurl = xb.getFingerCurl(context, 'ring');
++    const pinkyCurl = xb.getFingerCurl(context, 'pinky');
++    const spread = xb.getFingerSpread(context, 'index', 'middle');
++
++    const confidence = xb.clamp01(
++      xb.average([indexStraight, middleStraight]) *
++        xb.average([ringCurl, pinkyCurl, spread])
++    );
++
++    return {
++      confidence,
++      data: {
++        indexStraight,
++        middleStraight,
++        ringCurl,
++        pinkyCurl,
++        spread,
++      },
++    };
++  },
+   {enabled: true}
+ );
+ 
+@@ -179,6 +201,60 @@ spread
+ `point` and `spread` are registered disabled by default; enable them by name if
+ you want them emitted.
+ 
++## Hand Pose Helpers
++
++All helpers are exported from `xrblocks` and operate on `HandContext`.
++
++Joint access and palm pose:
++
++```txt
++getJoint(context, jointName)
++getFingerJoint(context, finger, suffix)
++estimateHandScale(context)
++getPalmWidth(context)
++getPalmNormal(context)
++getPalmRight(context)
++getPalmUp(context)
++getPalmPose(context)
++```
++
++Finger and thumb features:
++
++```txt
++getFingerBendAngles(context, finger)
++getFingerStraightness(context, finger)
++getFingerCurl(context, finger)
++getFingerDirection(context, finger)
++getFingerPalmAlignment(context, finger)
++getFingerSpread(context, fingerA, fingerB)
++getAdjacentFingerSpreads(context)
++getThumbBendAngles(context)
++getThumbStraightness(context)
++getThumbCurl(context)
++getThumbDirection(context)
++getThumbOpposition(context, finger)
++getThumbVerticalDirection(context)
++getFingertipDistance(context, digitA, digitB)
++getFingertipPalmDistance(context, digit)
++```
++
++Feature-vector helpers for ML/custom models:
++
++```txt
++getBoneVectors(context, global = false)
++getRelativeBoneAngles(context, global = false)
++```
++
++Utility helpers:
++
++```txt
++average(values)
++clamp01(value)
++```
++
++Finger names are `index`, `middle`, `ring`, and `pinky`. Digit names are
++`thumb`, `index`, `middle`, `ring`, and `pinky`.
++
+ ## Custom Gesture Recognizer
+ 
+ Use a custom `GestureRecognizer` when your recognizer owns its own model or
+@@ -199,7 +275,8 @@ class CustomGestureRecognizer {
+   }
+ 
+   recognize(context) {
+-    const result = runModel(this.model, context);
++    const features = xb.getRelativeBoneAngles(context);
++    const result = runModel(this.model, features);
+ 
+     return {
+       rock: {confidence: result.rock},
+diff --git a/src/input/gestures/HandPoseMetrics.ts b/src/input/gestures/HandPoseMetrics.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..a5d8aec3f3a6dac683f78c76504bbc5d03400d24
+--- /dev/null
++++ b/src/input/gestures/HandPoseMetrics.ts
+@@ -0,0 +1,349 @@
++import * as THREE from 'three';
++
++import {
++  HAND_BONE_IDX_CONNECTION_MAP,
++  HAND_JOINT_IDX_CONNECTION_MAP,
++} from '../../constants';
++import type {JointName} from '../Hands';
++import {HAND_JOINT_NAMES} from '../components/HandJointNames';
++import type {HandContext} from './GestureTypes';
++
++export type FingerName = 'index' | 'middle' | 'ring' | 'pinky';
++export type DigitName = 'thumb' | FingerName;
++
++export type PalmPose = {
++  center: THREE.Vector3;
++  width: number;
++  normal: THREE.Vector3;
++  right: THREE.Vector3;
++  up: THREE.Vector3;
++};
++
++export const FINGER_ORDER: FingerName[] = ['index', 'middle', 'ring', 'pinky'];
++
++const FINGER_PREFIX: Record<FingerName, string> = {
++  index: 'index-finger',
++  middle: 'middle-finger',
++  ring: 'ring-finger',
++  pinky: 'pinky-finger',
++};
++
++const DIGIT_JOINTS: Record<DigitName, JointName[]> = {
++  thumb: [
++    'thumb-metacarpal',
++    'thumb-phalanx-proximal',
++    'thumb-phalanx-distal',
++    'thumb-tip',
++  ],
++  index: [
++    'index-finger-metacarpal',
++    'index-finger-phalanx-proximal',
++    'index-finger-phalanx-intermediate',
++    'index-finger-phalanx-distal',
++    'index-finger-tip',
++  ],
++  middle: [
++    'middle-finger-metacarpal',
++    'middle-finger-phalanx-proximal',
++    'middle-finger-phalanx-intermediate',
++    'middle-finger-phalanx-distal',
++    'middle-finger-tip',
++  ],
++  ring: [
++    'ring-finger-metacarpal',
++    'ring-finger-phalanx-proximal',
++    'ring-finger-phalanx-intermediate',
++    'ring-finger-phalanx-distal',
++    'ring-finger-tip',
++  ],
++  pinky: [
++    'pinky-finger-metacarpal',
++    'pinky-finger-phalanx-proximal',
++    'pinky-finger-phalanx-intermediate',
++    'pinky-finger-phalanx-distal',
++    'pinky-finger-tip',
++  ],
++};
++
++const EPSILON = 1e-6;
++
++export function getFingerJoint(
++  context: HandContext,
++  finger: FingerName,
++  suffix: string
++) {
++  const prefix = FINGER_PREFIX[finger];
++  return context.getJoint(`${prefix}-${suffix}` as JointName);
++}
++
++export function estimateHandScale(context: HandContext) {
++  const wrist = context.getJoint('wrist');
++  const middleTip = context.getJoint('middle-finger-tip');
++  const palmWidth = getPalmWidth(context);
++
++  const measurements: number[] = [];
++  if (wrist && middleTip) measurements.push(middleTip.distanceTo(wrist));
++  if (palmWidth) measurements.push(palmWidth);
++
++  if (!measurements.length) return 0.08;
++  return average(measurements);
++}
++
++export function getPalmWidth(context: HandContext) {
++  const indexBase = getFingerJoint(context, 'index', 'metacarpal');
++  const pinkyBase = getFingerJoint(context, 'pinky', 'metacarpal');
++  if (!indexBase || !pinkyBase) return null;
++  return indexBase.distanceTo(pinkyBase);
++}
++
++export function getPalmNormal(context: HandContext) {
++  const wrist = context.getJoint('wrist');
++  const indexBase = getFingerJoint(context, 'index', 'metacarpal');
++  const pinkyBase = getFingerJoint(context, 'pinky', 'metacarpal');
++  if (!wrist || !indexBase || !pinkyBase) return null;
++
++  const u = new THREE.Vector3().subVectors(indexBase, wrist);
++  const v = new THREE.Vector3().subVectors(pinkyBase, wrist);
++  if (u.lengthSq() === 0 || v.lengthSq() === 0) return null;
++
++  const normal = new THREE.Vector3().crossVectors(u, v);
++  if (normal.lengthSq() === 0) return null;
++  if (context.handLabel === 'left') normal.multiplyScalar(-1);
++  return normal.normalize();
++}
++
++export function getPalmRight(context: HandContext) {
++  const indexBase = getFingerJoint(context, 'index', 'metacarpal');
++  const pinkyBase = getFingerJoint(context, 'pinky', 'metacarpal');
++  if (!indexBase || !pinkyBase) return null;
++  const right = new THREE.Vector3().subVectors(indexBase, pinkyBase);
++  if (context.handLabel === 'left') right.multiplyScalar(-1);
++  if (right.lengthSq() === 0) return null;
++  return right.normalize();
++}
++
++export function getPalmUp(context: HandContext) {
++  const normal = getPalmNormal(context);
++  const right = getPalmRight(context);
++  if (!normal || !right) return null;
++
++  const up = new THREE.Vector3().copy(right).cross(normal);
++  if (up.lengthSq() === 0) return null;
++  return up.normalize();
++}
++
++export function getPalmPose(context: HandContext): PalmPose | null {
++  const wrist = context.getJoint('wrist');
++  const indexBase = getFingerJoint(context, 'index', 'metacarpal');
++  const pinkyBase = getFingerJoint(context, 'pinky', 'metacarpal');
++  const width = getPalmWidth(context);
++  const normal = getPalmNormal(context);
++  const right = getPalmRight(context);
++  const up = getPalmUp(context);
++
++  if (
++    !wrist ||
++    !indexBase ||
++    !pinkyBase ||
++    !width ||
++    !normal ||
++    !right ||
++    !up
++  ) {
++    return null;
++  }
++
++  const center = new THREE.Vector3()
++    .add(wrist)
++    .add(indexBase)
++    .add(pinkyBase)
++    .multiplyScalar(1 / 3);
++
++  return {center, width, normal, right, up};
++}
++
++export function getFingerBendAngles(context: HandContext, finger: FingerName) {
++  return getDigitBendAngles(context, finger);
++}
++
++export function getFingerStraightness(
++  context: HandContext,
++  finger: FingerName
++) {
++  return getDigitStraightness(context, finger);
++}
++
++export function getFingerCurl(context: HandContext, finger: FingerName) {
++  return 1 - getFingerStraightness(context, finger);
++}
++
++export function getFingerDirection(context: HandContext, finger: FingerName) {
++  return getDigitDirection(context, finger);
++}
++
++export function getFingerPalmAlignment(
++  context: HandContext,
++  finger: FingerName
++) {
++  const direction = getFingerDirection(context, finger);
++  const palmUp = getPalmUp(context);
++  if (!direction || !palmUp) return 0;
++  return clamp01((direction.dot(palmUp) - 0.2) / 0.8);
++}
++
++export function getFingerSpread(
++  context: HandContext,
++  fingerA: FingerName,
++  fingerB: FingerName
++) {
++  const directionA = getFingerDirection(context, fingerA);
++  const directionB = getFingerDirection(context, fingerB);
++  if (!directionA || !directionB) return 0;
++  return clamp01((1 - directionA.dot(directionB)) / 0.45);
++}
++
++export function getAdjacentFingerSpreads(context: HandContext) {
++  return {
++    indexMiddle: getFingerSpread(context, 'index', 'middle'),
++    middleRing: getFingerSpread(context, 'middle', 'ring'),
++    ringPinky: getFingerSpread(context, 'ring', 'pinky'),
++  };
++}
++
++export function getThumbBendAngles(context: HandContext) {
++  return getDigitBendAngles(context, 'thumb');
++}
++
++export function getThumbStraightness(context: HandContext) {
++  return getDigitStraightness(context, 'thumb');
++}
++
++export function getThumbCurl(context: HandContext) {
++  return 1 - getThumbStraightness(context);
++}
++
++export function getThumbDirection(context: HandContext) {
++  return getDigitDirection(context, 'thumb');
++}
++
++export function getThumbOpposition(
++  context: HandContext,
++  finger: FingerName = 'index'
++) {
++  const distance = getFingertipDistance(context, 'thumb', finger);
++  const scale = getPalmWidth(context) ?? estimateHandScale(context);
++  if (distance === null || scale < EPSILON) return 0;
++  return clamp01(1 - distance / (scale * 0.7));
++}
++
++export function getThumbVerticalDirection(context: HandContext) {
++  const direction = getThumbDirection(context);
++  if (!direction) return 0;
++  return direction.y;
++}
++
++export function getFingertipDistance(
++  context: HandContext,
++  digitA: DigitName,
++  digitB: DigitName
++) {
++  const tipA = getDigitTip(context, digitA);
++  const tipB = getDigitTip(context, digitB);
++  if (!tipA || !tipB) return null;
++  return tipA.distanceTo(tipB);
++}
++
++export function getFingertipPalmDistance(
++  context: HandContext,
++  digit: DigitName
++) {
++  const tip = getDigitTip(context, digit);
++  const palmPose = getPalmPose(context);
++  if (!tip || !palmPose) return null;
++  return tip.distanceTo(palmPose.center);
++}
++
++export function getBoneVectors(context: HandContext) {
++  return HAND_JOINT_IDX_CONNECTION_MAP.map(([joint1, joint2]) => {
++    const start = context.getJoint(HAND_JOINT_NAMES[joint1]);
++    const end = context.getJoint(HAND_JOINT_NAMES[joint2]);
++    if (!start || !end) return new THREE.Vector3();
++
++    const boneVector = new THREE.Vector3().subVectors(end, start);
++    if (boneVector.lengthSq() === 0) return boneVector;
++    return boneVector.normalize();
++  });
++}
++
++export function getRelativeBoneAngles(context: HandContext) {
++  const boneVectors = getBoneVectors(context);
++  const angles = new Float32Array(HAND_BONE_IDX_CONNECTION_MAP.length);
++  HAND_BONE_IDX_CONNECTION_MAP.forEach(([bone1, bone2], index) => {
++    angles[index] = boneVectors[bone1].dot(boneVectors[bone2]);
++  });
++  return angles;
++}
++
++export function average(values: number[]) {
++  if (!values.length) return 0;
++  return values.reduce((sum, value) => sum + value, 0) / values.length;
++}
++
++export function clamp01(value: number) {
++  return THREE.MathUtils.clamp(value, 0, 1);
++}
++
++function getDigitBendAngles(context: HandContext, digit: DigitName) {
++  const segments = getDigitSegmentDirections(context, digit);
++  if (!segments || segments.length < 2) return [];
++
++  const angles: number[] = [];
++  for (let i = 0; i < segments.length - 1; i++) {
++    angles.push(segments[i].dot(segments[i + 1]));
++  }
++  return angles;
++}
++
++function getDigitStraightness(context: HandContext, digit: DigitName) {
++  const bendAngles = getDigitBendAngles(context, digit);
++  if (!bendAngles.length) return 0;
++  return average(bendAngles.map(normalizeStraightness));
++}
++
++function getDigitDirection(context: HandContext, digit: DigitName) {
++  const base = getDigitBase(context, digit);
++  const tip = getDigitTip(context, digit);
++  if (!base || !tip) return null;
++
++  const direction = new THREE.Vector3().subVectors(tip, base);
++  if (direction.lengthSq() === 0) return null;
++  return direction.normalize();
++}
++
++function getDigitBase(context: HandContext, digit: DigitName) {
++  return context.getJoint(DIGIT_JOINTS[digit][0]);
++}
++
++function getDigitTip(context: HandContext, digit: DigitName) {
++  return context.getJoint(DIGIT_JOINTS[digit][DIGIT_JOINTS[digit].length - 1]);
++}
++
++function getDigitSegmentDirections(context: HandContext, digit: DigitName) {
++  const joints = DIGIT_JOINTS[digit]
++    .map((jointName) => context.getJoint(jointName))
++    .filter(Boolean) as THREE.Vector3[];
++
++  if (joints.length !== DIGIT_JOINTS[digit].length) return null;
++
++  const segments: THREE.Vector3[] = [];
++  for (let i = 0; i < joints.length - 1; i++) {
++    const segment = new THREE.Vector3().subVectors(joints[i + 1], joints[i]);
++    if (segment.lengthSq() === 0) return null;
++    segments.push(segment.normalize());
++  }
++  return segments;
++}
++
++function normalizeStraightness(bendCosine: number) {
++  return clamp01((bendCosine - 0.55) / 0.4);
++}
+diff --git a/src/input/gestures/gestureRecognizers/BuiltInHeuristicGestures.ts b/src/input/gestures/gestureRecognizers/BuiltInHeuristicGestures.ts
+index dc419eb4041e22b7836bb9db657a1febab70d861..3af3b0429e0cbe6f9eb3c387ffb7a90799b5ba16 100644
+--- a/src/input/gestures/gestureRecognizers/BuiltInHeuristicGestures.ts
++++ b/src/input/gestures/gestureRecognizers/BuiltInHeuristicGestures.ts
+@@ -1,69 +1,333 @@
+ import {GestureConfiguration} from '../GestureRecognitionOptions';
+-import type {GestureDetectionResult, HandContext} from '../GestureTypes';
++import type {HandContext} from '../GestureTypes';
++import {
++  FINGER_ORDER,
++  average,
++  clamp01,
++  estimateHandScale,
++  getAdjacentFingerSpreads,
++  getFingerCurl,
++  getFingerPalmAlignment,
++  getFingerSpread,
++  getFingerStraightness,
++  getFingertipDistance,
++  getFingertipPalmDistance,
++  getPalmWidth,
++  getThumbOpposition,
++  getThumbStraightness,
++  getThumbVerticalDirection,
++} from '../HandPoseMetrics';
+ 
+-function notImplemented(): never {
+-  throw new Error('Heuristic hand gesture recognition is not implemented.');
+-}
++const EPSILON = 1e-6;
+ 
+ export function detectPinch(
+   context: HandContext,
+   config: GestureConfiguration
+-): GestureDetectionResult | undefined {
+-  void context;
+-  void config;
+-  return notImplemented();
++) {
++  const distance = getFingertipDistance(context, 'thumb', 'index');
++  if (distance === null || !Number.isFinite(distance)) return undefined;
++
++  const scale = getPalmWidth(context) ?? estimateHandScale(context);
++  if (scale < EPSILON) return {confidence: 0};
++
++  const threshold = Math.max(config.threshold ?? 0, scale * 0.32, 0.025);
++  const distanceScore = clamp01(
++    (threshold * 1.8 - distance) / (threshold * 1.2)
++  );
++  const supportExtension = average(
++    (['middle', 'ring', 'pinky'] as const).map((finger) =>
++      getFingerStraightness(context, finger)
++    )
++  );
++  const supportPenalty = clamp01((supportExtension - 0.55) / 0.45);
++  const confidence = clamp01(distanceScore * (1 - supportPenalty * 0.35));
++
++  return {
++    confidence,
++    data: {distance, threshold, supportPenalty},
++  };
+ }
+ 
+ export function detectOpenPalm(
+   context: HandContext,
+   config: GestureConfiguration
+-): GestureDetectionResult | undefined {
+-  void context;
+-  void config;
+-  return notImplemented();
++) {
++  const straightnessScores = FINGER_ORDER.map((finger) =>
++    getFingerStraightness(context, finger)
++  );
++  const extensionScores = FINGER_ORDER.map((finger) =>
++    getFingerExtensionScore(context, finger)
++  );
++  const straightness = average(straightnessScores);
++  const extension = average(extensionScores);
++  const allFingersStraight = Math.min(...straightnessScores);
++  const allFingersExtended = Math.min(...extensionScores);
++  const palmAlignment = average(
++    FINGER_ORDER.map((finger) => getFingerPalmAlignment(context, finger))
++  );
++  const spread = getTipSpreadScore(context);
++  const openGate = Math.min(allFingersStraight, allFingersExtended);
++
++  const confidence = clamp01(
++    openGate *
++      (straightness * 0.3 +
++        extension * 0.35 +
++        spread * 0.15 +
++        palmAlignment * 0.2)
++  );
++
++  return {
++    confidence,
++    data: {
++      straightness,
++      extension,
++      allFingersStraight,
++      allFingersExtended,
++      openGate,
++      palmAlignment,
++      spread,
++      threshold: config.threshold,
++    },
++  };
+ }
+ 
+-export function detectFist(
+-  context: HandContext,
+-  config: GestureConfiguration
+-): GestureDetectionResult | undefined {
+-  void context;
+-  void config;
+-  return notImplemented();
++export function detectFist(context: HandContext, config: GestureConfiguration) {
++  const closedScores = FINGER_ORDER.map((finger) =>
++    getFingerClosedScore(context, finger)
++  );
++  const closed = average(closedScores);
++  const scale = getPalmWidth(context) ?? estimateHandScale(context);
++  const palmDistances = FINGER_ORDER.map((finger) =>
++    getFingertipPalmDistance(context, finger)
++  ).filter((distance): distance is number => distance !== null);
++  const palmDistanceAverage = average(palmDistances);
++  const palmDistanceScore =
++    scale > EPSILON ? clamp01(1 - palmDistanceAverage / (scale * 1.35)) : 0;
++  const thumbWrap = Math.max(
++    getThumbOpposition(context, 'index'),
++    getThumbOpposition(context, 'middle')
++  );
++  const thumbStraightness = getThumbStraightness(context);
++  const thumbVertical = getThumbVerticalDirection(context);
++  const verticalThumbPenalty =
++    thumbStraightness * clamp01((Math.abs(thumbVertical) - 0.25) / 0.5);
++
++  const baseConfidence = clamp01(
++    closed * 0.7 + palmDistanceScore * 0.2 + thumbWrap * 0.1
++  );
++  const confidence = clamp01(
++    baseConfidence * (1 - verticalThumbPenalty * 0.85)
++  );
++
++  return {
++    confidence,
++    data: {
++      closed,
++      palmDistanceScore,
++      thumbWrap,
++      thumbStraightness,
++      thumbVertical,
++      verticalThumbPenalty,
++      threshold: config.threshold,
++    },
++  };
+ }
+ 
+ export function detectThumbsUp(
+   context: HandContext,
+   config: GestureConfiguration
+-): GestureDetectionResult | undefined {
+-  void context;
+-  void config;
+-  return notImplemented();
++) {
++  const thumbStraightness = getThumbStraightness(context);
++  const thumbVertical = clamp01(
++    (getThumbVerticalDirection(context) - 0.35) / 0.5
++  );
++  const otherCurl = average(
++    FINGER_ORDER.map((finger) => getFingerClosedScore(context, finger))
++  );
++  const indexDistance = getFingertipDistance(context, 'thumb', 'index');
++  const scale = getPalmWidth(context) ?? estimateHandScale(context);
++  const separation =
++    indexDistance !== null && scale > EPSILON
++      ? clamp01((indexDistance - scale * 0.65) / (scale * 0.5))
++      : 0;
++  const thumbWrapPenalty = Math.max(
++    getThumbOpposition(context, 'index'),
++    getThumbOpposition(context, 'middle')
++  );
++  const thumbPose = thumbStraightness * thumbVertical;
++
++  const confidence = clamp01(
++    thumbPose *
++      (otherCurl * 0.45 + separation * 0.35 + (1 - thumbWrapPenalty) * 0.2)
++  );
++
++  return {
++    confidence,
++    data: {
++      thumbStraightness,
++      thumbVertical,
++      otherCurl,
++      separation,
++      thumbWrapPenalty,
++      threshold: config.threshold,
++    },
++  };
+ }
+ 
+ export function detectThumbsDown(
+   context: HandContext,
+   config: GestureConfiguration
+-): GestureDetectionResult | undefined {
+-  void context;
+-  void config;
+-  return notImplemented();
++) {
++  const thumbStraightness = getThumbStraightness(context);
++  const thumbVertical = clamp01(
++    (-getThumbVerticalDirection(context) - 0.35) / 0.5
++  );
++  const otherCurl = average(
++    FINGER_ORDER.map((finger) => getFingerClosedScore(context, finger))
++  );
++  const indexDistance = getFingertipDistance(context, 'thumb', 'index');
++  const scale = getPalmWidth(context) ?? estimateHandScale(context);
++  const separation =
++    indexDistance !== null && scale > EPSILON
++      ? clamp01((indexDistance - scale * 0.65) / (scale * 0.5))
++      : 0;
++  const thumbWrapPenalty = Math.max(
++    getThumbOpposition(context, 'index'),
++    getThumbOpposition(context, 'middle')
++  );
++  const thumbPose = thumbStraightness * thumbVertical;
++
++  const confidence = clamp01(
++    thumbPose *
++      (otherCurl * 0.45 + separation * 0.35 + (1 - thumbWrapPenalty) * 0.2)
++  );
++
++  return {
++    confidence,
++    data: {
++      thumbStraightness,
++      thumbVertical,
++      otherCurl,
++      separation,
++      thumbWrapPenalty,
++      threshold: config.threshold,
++    },
++  };
+ }
+ 
+ export function detectPoint(
+   context: HandContext,
+   config: GestureConfiguration
+-): GestureDetectionResult | undefined {
+-  void context;
+-  void config;
+-  return notImplemented();
++) {
++  const indexStraightness = getFingerStraightness(context, 'index');
++  const indexAlignment = getFingerPalmAlignment(context, 'index');
++  const indexExtension = getFingerExtensionScore(context, 'index');
++  const middleClosed = getFingerClosedScore(context, 'middle');
++  const ringClosed = getFingerClosedScore(context, 'ring');
++  const pinkyClosed = getFingerClosedScore(context, 'pinky');
++  const otherCurl = average([middleClosed, ringClosed, pinkyClosed]);
++  const allOtherFingersClosed = Math.min(middleClosed, ringClosed, pinkyClosed);
++  const indexPose = average([
++    indexStraightness,
++    indexExtension,
++    Math.max(indexAlignment, 0.5),
++  ]);
++
++  const confidence = clamp01(
++    indexPose * (otherCurl * 0.65 + allOtherFingersClosed * 0.35)
++  );
++
++  return {
++    confidence,
++    data: {
++      indexStraightness,
++      indexExtension,
++      indexAlignment,
++      otherCurl,
++      allOtherFingersClosed,
++      threshold: config.threshold,
++    },
++  };
++}
++
++function getFingerClosedScore(
++  context: HandContext,
++  finger: (typeof FINGER_ORDER)[number]
++) {
++  return Math.max(
++    getFingerCurl(context, finger),
++    1 - getFingerExtensionScore(context, finger)
++  );
++}
++
++function getFingerExtensionScore(
++  context: HandContext,
++  finger: (typeof FINGER_ORDER)[number]
++) {
++  const distance = getFingertipPalmDistance(context, finger);
++  const scale = getPalmWidth(context) ?? estimateHandScale(context);
++  if (distance === null || scale < EPSILON) return 0;
++  return clamp01((distance - scale * 0.45) / (scale * 0.85));
+ }
+ 
+ export function detectSpread(
+   context: HandContext,
+   config: GestureConfiguration
+-): GestureDetectionResult | undefined {
+-  void context;
+-  void config;
+-  return notImplemented();
++) {
++  const straightnessScores = FINGER_ORDER.map((finger) =>
++    getFingerStraightness(context, finger)
++  );
++  const extensionScores = FINGER_ORDER.map((finger) =>
++    getFingerExtensionScore(context, finger)
++  );
++  const straightness = average(straightnessScores);
++  const extension = average(extensionScores);
++  const allFingersStraight = Math.min(...straightnessScores);
++  const allFingersExtended = Math.min(...extensionScores);
++  const adjacentSpreads = getAdjacentFingerSpreads(context);
++  const directionSpread = average(Object.values(adjacentSpreads));
++  const tipSpread = getTipSpreadScore(context);
++  const spread = Math.max(directionSpread, tipSpread);
++  const palmAlignment = average(
++    FINGER_ORDER.map((finger) => getFingerPalmAlignment(context, finger))
++  );
++  const indexPinkySpread = getFingerSpread(context, 'index', 'pinky');
++  const openGate = average([allFingersStraight, allFingersExtended]);
++
++  const confidence = clamp01(
++    openGate *
++      (straightness * 0.2 +
++        extension * 0.2 +
++        spread * 0.45 +
++        Math.max(indexPinkySpread, palmAlignment) * 0.15)
++  );
++
++  return {
++    confidence,
++    data: {
++      straightness,
++      extension,
++      allFingersStraight,
++      allFingersExtended,
++      openGate,
++      spread,
++      indexPinkySpread,
++      palmAlignment,
++      threshold: config.threshold,
++    },
++  };
++}
++
++function getTipSpreadScore(context: HandContext) {
++  const scale = getPalmWidth(context) ?? estimateHandScale(context);
++  if (scale < EPSILON) return 0;
++
++  const distances = [
++    getFingertipDistance(context, 'index', 'middle'),
++    getFingertipDistance(context, 'middle', 'ring'),
++    getFingertipDistance(context, 'ring', 'pinky'),
++  ].filter((distance): distance is number => distance !== null);
++
++  if (!distances.length) return 0;
++  return clamp01((average(distances) - scale * 0.25) / (scale * 0.45));
+ }
+diff --git a/src/xrblocks.ts b/src/xrblocks.ts
+index 2a1580081b5c44c95f9310aa0de0bf955832ee6a..658078e3fb1f78483464897bfbd1a7eb440d62d2 100644
+--- a/src/xrblocks.ts
++++ b/src/xrblocks.ts
+@@ -39,6 +39,7 @@ export * from './input/gestures/GestureRecognition';
+ export * from './input/gestures/GestureRecognitionOptions';
+ export * from './input/gestures/GestureEvents';
+ export * from './input/gestures/GestureTypes';
++export * from './input/gestures/HandPoseMetrics';
+ export * from './input/gestures/poseEstimators/WebXRHandPoseEstimator';
+ export * from './input/gestures/poseEstimators/MediaPipeHandPoseEstimator';
+ export * from './input/gestures/poseEstimators/TensorFlowHandPoseEstimator';

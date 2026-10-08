@@ -1,0 +1,46 @@
+schema_version = "1.4"
+
+artifacts = [
+  { source = "/workspace/app", destination = "app", exclude = [".git", ".git/**", "node_modules", "node_modules/**"] },
+]
+
+[task]
+name = "genxr-bench/mug-cauldron"
+description = "A mixed-reality potion activity turns a ceramic mug into a cauldron where users combine three numbered ingredients in order."
+authors = []
+keywords = ["xr", "app", "interaction", "manipulation", "perception", "placement"]
+
+[metadata]
+difficulty = "easy"
+category = "app"
+xrblocks_version = "0.21.0"
+app_category = "entertainment/digital_toys"
+
+[agent]
+timeout_sec = 7200
+network_mode = "allowlist"
+allowed_hosts = [
+  "api.anthropic.com",
+  "api.deepseek.com",
+  "api.openai.com",
+  "generativelanguage.googleapis.com",
+  "immersive-web.github.io",
+  "openrouter.ai",
+  "pmndrs.github.io",
+  "threejs.org",
+]
+
+[environment]
+network_mode = "public"
+build_timeout_sec = 1800.0
+memory_mb = 4096
+storage_mb = 10240
+gpus = 0
+
+[verifier]
+timeout_sec = 3600
+network_mode = "public"
+
+[verifier.env]
+GEMINI_API_KEY = "${GEMINI_API_KEY}"
+MODEL_NAME = "gemini-3.8-flash"

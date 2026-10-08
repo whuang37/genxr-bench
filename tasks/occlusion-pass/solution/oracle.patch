@@ -1,0 +1,795 @@
+diff --git a/src/depth/occlusion/OcclusionMapMeshMaterial.ts b/src/depth/occlusion/OcclusionMapMeshMaterial.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..b6247b9bfe6e1226134c739ed245535576c90250
+--- /dev/null
++++ b/src/depth/occlusion/OcclusionMapMeshMaterial.ts
+@@ -0,0 +1,102 @@
++import * as THREE from 'three';
++
++export class OcclusionMapMeshMaterial extends THREE.MeshBasicMaterial {
++  uniforms: {[uniform: string]: THREE.IUniform};
++
++  constructor(camera: THREE.PerspectiveCamera, useFloatDepth: boolean) {
++    super();
++    this.uniforms = {
++      uDepthTexture: {value: null},
++      uDepthTextureArray: {value: null},
++      uViewId: {value: 0.0},
++      uIsTextureArray: {value: 0.0},
++      uRawValueToMeters: {value: 8.0 / 65536.0},
++      cameraFar: {value: camera.far},
++      cameraNear: {value: camera.near},
++      uFloatDepth: {value: useFloatDepth},
++      uDepthViewMatrix: {value: camera.matrixWorldInverse.clone()},
++      uDepthProjectionMatrix: {value: camera.projectionMatrix.clone()},
++      // Used for interpreting Quest 3 depth.
++      uDepthNear: {value: 0},
++    };
++    this.onBeforeCompile = (shader) => {
++      Object.assign(shader.uniforms, this.uniforms);
++      this.uniforms = shader.uniforms;
++      shader.vertexShader = shader.vertexShader
++        .replace(
++          '#include <common>',
++          [
++            'uniform mat4 uDepthProjectionMatrix;',
++            'uniform mat4 uDepthViewMatrix;',
++            'varying vec2 vTexCoord;',
++            'varying float vVirtualDepth;',
++            '#include <common>',
++          ].join('\n')
++        )
++        .replace(
++          '#include <fog_vertex>',
++          [
++            '#include <fog_vertex>',
++            'vec4 world_position = modelMatrix * vec4( position, 1.0 );',
++            'vec4 depth_view_position = uDepthViewMatrix * world_position;',
++            'vVirtualDepth = -depth_view_position.z;',
++            'vec4 depth_clip_position = uDepthProjectionMatrix * depth_view_position;',
++            'vec2 depth_ndc = depth_clip_position.xy / max(0.00001, depth_clip_position.w);',
++            'vTexCoord = 0.5 + 0.5 * depth_ndc;',
++          ].join('\n')
++        );
++      shader.fragmentShader = shader.fragmentShader
++        .replace(
++          'uniform vec3 diffuse;',
++          [
++            'uniform vec3 diffuse;',
++            'uniform sampler2D uDepthTexture;',
++            'uniform sampler2DArray uDepthTextureArray;',
++            'uniform float uRawValueToMeters;',
++            'uniform float cameraNear;',
++            'uniform float cameraFar;',
++            'uniform bool uFloatDepth;',
++            'uniform bool uIsTextureArray;',
++            'uniform float uDepthNear;',
++            'uniform int uViewId;',
++            'varying vec2 vTexCoord;',
++            'varying float vVirtualDepth;',
++          ].join('\n')
++        )
++        .replace(
++          '#include <clipping_planes_pars_fragment>',
++          [
++            '#include <clipping_planes_pars_fragment>',
++            `
++  float DepthGetMeters(in sampler2D depth_texture, in vec2 depth_uv) {
++    // Depth is packed into the luminance and alpha components of its texture.
++    // The texture is in a normalized format, storing raw values that need to be
++    // converted to meters.
++    vec2 packedDepthAndVisibility = texture2D(depth_texture, depth_uv).rg;
++    if (uFloatDepth) {
++      return packedDepthAndVisibility.r * uRawValueToMeters;
++    }
++    return dot(packedDepthAndVisibility, vec2(255.0, 256.0 * 255.0)) * uRawValueToMeters;
++  }
++  float DepthArrayGetMeters(in sampler2DArray depth_texture, in vec2 depth_uv) {
++    float textureValue = texture(depth_texture, vec3(depth_uv.x, depth_uv.y, uViewId)).r;
++    return uRawValueToMeters * uDepthNear / (1.0 - textureValue);
++  }
++`,
++          ].join('\n')
++        )
++        .replace(
++          '#include <dithering_fragment>',
++          [
++            '#include <dithering_fragment>',
++            'vec4 texCoord = vec4(vTexCoord, 0, 1);',
++            'vec2 uv = vec2(texCoord.x, uIsTextureArray?texCoord.y:(1.0 - texCoord.y));',
++            'highp float real_depth = uIsTextureArray ? DepthArrayGetMeters(uDepthTextureArray, uv) : DepthGetMeters(uDepthTexture, uv);',
++            'bool outOfBounds = uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || vVirtualDepth <= 0.0;',
++            'float isNotOccluded = outOfBounds ? 1.0 : step(vVirtualDepth, real_depth);',
++            'gl_FragColor = vec4(isNotOccluded, 1.0, 0.0, 1.0);',
++          ].join('\n')
++        );
++    };
++  }
++}
+diff --git a/src/depth/occlusion/OcclusionPass.ts b/src/depth/occlusion/OcclusionPass.ts
+index 9db7652e0d817d676abc8a57280087b100a14a74..bf3a68463ce116566aeee8fc966dafa871553b38 100644
+--- a/src/depth/occlusion/OcclusionPass.ts
++++ b/src/depth/occlusion/OcclusionPass.ts
+@@ -1,14 +1,53 @@
+ import * as THREE from 'three';
+-import {Pass} from 'three/addons/postprocessing/Pass.js';
++import {FullScreenQuad, Pass} from 'three/addons/postprocessing/Pass.js';
+ 
+ import {OCCLUDABLE_ITEMS_LAYER} from '../../constants';
+ import type {ShaderUniforms} from '../../utils/Types';
+ 
++import {KawaseBlurShader} from './kawaseblur.glsl';
++import {OcclusionShader} from './occlusion.glsl';
++import {OcclusionMapShader} from './occlusion_map.glsl';
++import {OcclusionMapMeshMaterial} from './OcclusionMapMeshMaterial';
++
++enum KawaseBlurMode {
++  COPY = 0,
++  DOWN = 1,
++  UP = 2,
++}
++
+ /**
+  * Occlusion postprocessing shader pass.
+- * Generates an occlusion map for materials or composites it with a frame.
++ * This is used to generate an occlusion map.
++ * There are two modes:
++ * Mode A: Generate an occlusion map for individual materials to use.
++ * Mode B: Given a rendered frame, run as a postprocessing pass, occluding all
++ * items in the frame. The steps are
++ * 1. Compute an occlusion map between the real and virtual depth.
++ * 2. Blur the occlusion map using Kawase blur.
++ * 3. (Mode B only) Apply the occlusion map to the rendered frame.
+  */
+ export class OcclusionPass extends Pass {
++  private depthTextures: THREE.Texture[] = [];
++  private occlusionMeshMaterial: OcclusionMapMeshMaterial;
++  private occlusionMapUniforms: ShaderUniforms;
++  private occlusionMapQuad: FullScreenQuad;
++  private occlusionMapTexture: THREE.WebGLRenderTarget;
++  private kawaseBlurQuads: FullScreenQuad[];
++  private kawaseBlurTargets: THREE.WebGLRenderTarget[];
++  private occlusionUniforms: ShaderUniforms;
++  private occlusionQuad: FullScreenQuad;
++  private depthNear: (number | undefined)[] = [];
++  private depthViewMatrices: THREE.Matrix4[] = [];
++  private depthProjectionMatrices: THREE.Matrix4[] = [];
++  // Cached dimensions of the render targets so we only call setSize()
++  // when they actually changed. setSize() forces a GPU texture
++  // reallocation even when called with the same dimensions, which
++  // showed up as ~150 ms in a portals trace from a steady-state frame
++  // loop (renderer drawing-buffer size never changes mid-session).
++  private lastOcclusionMapSize = new THREE.Vector2(0, 0);
++  private lastKawaseBlurSize = new THREE.Vector2(0, 0);
++  private readonly renderDimensions = new THREE.Vector2();
++
+   constructor(
+     private scene: THREE.Scene,
+     private camera: THREE.PerspectiveCamera,
+@@ -17,7 +56,98 @@ export class OcclusionPass extends Pass {
+     private occludableItemsLayer = OCCLUDABLE_ITEMS_LAYER
+   ) {
+     super();
+-    void [this.scene, this.camera, useFloatDepth, this.occludableItemsLayer];
++
++    this.occlusionMeshMaterial = new OcclusionMapMeshMaterial(
++      camera,
++      useFloatDepth
++    );
++
++    this.occlusionMapUniforms = {
++      uDepthTexture: {value: null},
++      uDepthTextureArray: {value: null},
++      uViewId: {value: 0.0},
++      uIsTextureArray: {value: 0.0},
++      uUvTransform: {value: new THREE.Matrix4()},
++      uRawValueToMeters: {value: 8.0 / 65536.0},
++      uAlpha: {value: 0.75},
++      tDiffuse: {value: null},
++      tDepth: {value: null},
++      uFloatDepth: {value: useFloatDepth},
++      cameraFar: {value: camera.far},
++      cameraNear: {value: camera.near},
++    };
++    this.occlusionMapQuad = new FullScreenQuad(
++      new THREE.ShaderMaterial({
++        name: 'OcclusionMapShader',
++        uniforms: this.occlusionMapUniforms,
++        vertexShader: OcclusionMapShader.vertexShader,
++        fragmentShader: OcclusionMapShader.fragmentShader,
++      })
++    );
++    this.occlusionMapTexture = new THREE.WebGLRenderTarget();
++
++    this.kawaseBlurTargets = [
++      new THREE.WebGLRenderTarget(), // 1/2 resolution
++      new THREE.WebGLRenderTarget(), // 1/4 resolution
++      new THREE.WebGLRenderTarget(), // 1/8 resolution
++    ];
++    this.kawaseBlurQuads = [
++      this.setupKawaseBlur(
++        KawaseBlurMode.DOWN,
++        this.occlusionMapTexture.texture
++      ),
++      this.setupKawaseBlur(
++        KawaseBlurMode.DOWN,
++        this.kawaseBlurTargets[0].texture
++      ),
++      this.setupKawaseBlur(
++        KawaseBlurMode.DOWN,
++        this.kawaseBlurTargets[1].texture
++      ),
++      this.setupKawaseBlur(
++        KawaseBlurMode.UP,
++        this.kawaseBlurTargets[2].texture
++      ),
++      this.setupKawaseBlur(
++        KawaseBlurMode.UP,
++        this.kawaseBlurTargets[1].texture
++      ),
++      this.setupKawaseBlur(
++        KawaseBlurMode.UP,
++        this.kawaseBlurTargets[0].texture
++      ),
++    ];
++
++    this.occlusionUniforms = {
++      tDiffuse: {value: null},
++      tOcclusionMap: {value: this.occlusionMapTexture.texture},
++    };
++    this.occlusionQuad = new FullScreenQuad(
++      new THREE.ShaderMaterial({
++        name: 'OcclusionShader',
++        uniforms: this.occlusionUniforms,
++        vertexShader: OcclusionShader.vertexShader,
++        fragmentShader: OcclusionShader.fragmentShader,
++      })
++    );
++
++    this.occludableItemsLayer = occludableItemsLayer;
++  }
++
++  private setupKawaseBlur(mode: KawaseBlurMode, inputTexture: THREE.Texture) {
++    const uniforms = {
++      uBlurSize: {value: 7.0},
++      uTexelSize: {value: new THREE.Vector2()},
++      tDiffuse: {value: inputTexture},
++    };
++    const kawase1Material = new THREE.ShaderMaterial({
++      name: 'Kawase',
++      uniforms: uniforms,
++      vertexShader: KawaseBlurShader.vertexShader,
++      fragmentShader: KawaseBlurShader.fragmentShader,
++      defines: {MODE: mode},
++    });
++    return new FullScreenQuad(kawase1Material);
+   }
+ 
+   setDepthTexture(
+@@ -28,15 +158,18 @@ export class OcclusionPass extends Pass {
+     depthViewMatrix?: THREE.Matrix4,
+     depthProjectionMatrix?: THREE.Matrix4
+   ) {
+-    void [
+-      depthTexture,
+-      rawValueToMeters,
+-      viewId,
+-      depthNear,
+-      depthViewMatrix,
+-      depthProjectionMatrix,
+-    ];
+-    throw new Error('OcclusionPass.setDepthTexture is not implemented');
++    this.depthTextures[viewId] = depthTexture;
++    this.occlusionMapUniforms.uRawValueToMeters.value = rawValueToMeters;
++    this.occlusionMeshMaterial.uniforms.uRawValueToMeters.value =
++      rawValueToMeters;
++    this.depthNear[viewId] = depthNear;
++    if (depthViewMatrix) {
++      this.depthViewMatrices[viewId] = depthViewMatrix;
++    }
++    if (depthProjectionMatrix) {
++      this.depthProjectionMatrices[viewId] = depthProjectionMatrix;
++    }
++    depthTexture.needsUpdate = true;
+   }
+ 
+   /**
+@@ -52,8 +185,25 @@ export class OcclusionPass extends Pass {
+     readBuffer?: THREE.WebGLRenderTarget,
+     viewId = 0
+   ) {
+-    void [renderer, writeBuffer, readBuffer, viewId];
+-    throw new Error('OcclusionPass.render is not implemented');
++    const originalRenderTarget = renderer.getRenderTarget();
++    const dimensions = this.renderDimensions;
++    if (readBuffer == null) {
++      this.renderOcclusionMapFromScene(renderer, dimensions, viewId);
++    } else {
++      this.renderOcclusionMapFromReadBuffer(
++        renderer,
++        readBuffer,
++        dimensions,
++        viewId
++      );
++    }
++
++    // Blur the occlusion map
++    this.blurOcclusionMap(renderer, dimensions);
++
++    // Fuse the rendered image and the occlusion map.
++    this.applyOcclusionMapToRenderedImage(renderer, readBuffer, writeBuffer);
++    renderer.setRenderTarget(originalRenderTarget);
+   }
+ 
+   renderOcclusionMapFromScene(
+@@ -61,10 +211,35 @@ export class OcclusionPass extends Pass {
+     dimensions: THREE.Vector2,
+     viewId: number
+   ) {
+-    void [renderer, dimensions, viewId];
+-    throw new Error(
+-      'OcclusionPass.renderOcclusionMapFromScene is not implemented'
+-    );
++    // Compute our own read buffer.
++    const texture = this.depthTextures[viewId];
++    const isTextureArray = texture instanceof THREE.ExternalTexture;
++    this.occlusionMeshMaterial.uniforms.uIsTextureArray.value = isTextureArray
++      ? 1.0
++      : 0;
++    this.occlusionMeshMaterial.uniforms.uViewId.value = viewId;
++    if (isTextureArray) {
++      this.occlusionMeshMaterial.uniforms.uDepthTextureArray.value = texture;
++      this.occlusionMeshMaterial.uniforms.uDepthNear.value =
++        this.depthNear[viewId];
++    } else {
++      this.occlusionMeshMaterial.uniforms.uDepthTexture.value = texture;
++    }
++    const camera = renderer.xr.getCamera().cameras[viewId] || this.camera;
++    this.occlusionMeshMaterial.uniforms.uDepthViewMatrix.value =
++      this.depthViewMatrices[viewId] || camera.matrixWorldInverse;
++    this.occlusionMeshMaterial.uniforms.uDepthProjectionMatrix.value =
++      this.depthProjectionMatrices[viewId] || camera.projectionMatrix;
++    this.scene.overrideMaterial = this.occlusionMeshMaterial;
++    renderer.getDrawingBufferSize(dimensions);
++    this.resizeOcclusionMap(dimensions);
++    const renderTarget = this.occlusionMapTexture;
++    renderer.setRenderTarget(renderTarget);
++    const originalCameraLayerMask = camera.layers.mask;
++    camera.layers.set(this.occludableItemsLayer);
++    renderer.render(this.scene, camera);
++    camera.layers.mask = originalCameraLayerMask;
++    this.scene.overrideMaterial = null;
+   }
+ 
+   renderOcclusionMapFromReadBuffer(
+@@ -73,15 +248,101 @@ export class OcclusionPass extends Pass {
+     dimensions: THREE.Vector2,
+     viewId: number
+   ) {
+-    void [renderer, readBuffer, dimensions, viewId];
+-    throw new Error(
+-      'OcclusionPass.renderOcclusionMapFromReadBuffer is not implemented'
+-    );
++    // Convert the readBuffer into an occlusion map.
++    // Render depth into texture
++    this.occlusionMapUniforms.tDiffuse.value = readBuffer.texture;
++    this.occlusionMapUniforms.tDepth.value = readBuffer.depthTexture;
++    const texture = this.depthTextures[viewId];
++    const isTextureArray = texture instanceof THREE.ExternalTexture;
++    // NOTE: occlusionMapQuad (rendered below) is a ShaderMaterial whose
++    // fragment shader is OcclusionMapShader (occlusion_map.glsl), and it
++    // reads its uniforms from `occlusionMapUniforms` -- not from
++    // `occlusionMeshMaterial.uniforms`, which only backs the
++    // scene.overrideMaterial used by renderOcclusionMapFromScene(). Writing
++    // the environment depth texture into occlusionMeshMaterial here left
++    // occlusionMapQuad's uDepthTexture unbound, so it sampled as 0,
++    // producing a zero occlusion mask (fully black output). See #531.
++    //
++    // Also note: OcclusionMapShader's fragment shader currently only
++    // declares `uniform sampler2D uDepthTexture` and has no
++    // texture-array/uDepthNear/uViewId handling (unlike
++    // OcclusionMapMeshMaterial's shader), so the isTextureArray branch
++    // below is not yet functional for this read-buffer path. Tracking
++    // that as a follow-up rather than expanding scope of this fix.
++    this.occlusionMapUniforms.uIsTextureArray.value = isTextureArray ? 1.0 : 0;
++    this.occlusionMapUniforms.uViewId.value = viewId;
++    if (isTextureArray) {
++      this.occlusionMapUniforms.uDepthTextureArray.value = texture;
++    } else {
++      this.occlusionMapUniforms.uDepthTexture.value = texture;
++    }
++    // First render the occlusion map to an intermediate buffer.
++    renderer.getDrawingBufferSize(dimensions);
++    this.resizeOcclusionMap(dimensions);
++    renderer.setRenderTarget(this.occlusionMapTexture);
++    this.occlusionMapQuad.render(renderer);
+   }
+ 
+   blurOcclusionMap(renderer: THREE.WebGLRenderer, dimensions: THREE.Vector2) {
+-    void [renderer, dimensions];
+-    throw new Error('OcclusionPass.blurOcclusionMap is not implemented');
++    this.resizeKawaseBlur(dimensions);
++    for (let i = 0; i < 3; i++) {
++      (
++        this.kawaseBlurQuads[i].material as THREE.ShaderMaterial
++      ).uniforms.uTexelSize.value.set(
++        1 / (dimensions.x / 2 ** i),
++        1 / (dimensions.y / 2 ** i)
++      );
++      (
++        this.kawaseBlurQuads[this.kawaseBlurQuads.length - 1 - i]
++          .material as THREE.ShaderMaterial
++      ).uniforms.uTexelSize.value.set(
++        1 / (dimensions.x / 2 ** (i - 1)),
++        1 / (dimensions.y / 2 ** (i - 1))
++      );
++    }
++    renderer.setRenderTarget(this.kawaseBlurTargets[0]);
++    this.kawaseBlurQuads[0].render(renderer);
++    renderer.setRenderTarget(this.kawaseBlurTargets[1]);
++    this.kawaseBlurQuads[1].render(renderer);
++    renderer.setRenderTarget(this.kawaseBlurTargets[2]);
++    this.kawaseBlurQuads[2].render(renderer);
++    renderer.setRenderTarget(this.kawaseBlurTargets[1]);
++    this.kawaseBlurQuads[3].render(renderer);
++    renderer.setRenderTarget(this.kawaseBlurTargets[0]);
++    this.kawaseBlurQuads[4].render(renderer);
++    renderer.setRenderTarget(this.occlusionMapTexture);
++    this.kawaseBlurQuads[5].render(renderer);
++  }
++
++  // Only call setSize() when the cached dimensions have actually
++  // changed. setSize triggers a render-target reallocation on every
++  // call (no internal short-circuit), and getDrawingBufferSize returns
++  // the same value frame after frame in a steady session.
++  private resizeOcclusionMap(dimensions: THREE.Vector2) {
++    if (
++      this.lastOcclusionMapSize.x === dimensions.x &&
++      this.lastOcclusionMapSize.y === dimensions.y
++    ) {
++      return;
++    }
++    this.lastOcclusionMapSize.copy(dimensions);
++    this.occlusionMapTexture.setSize(dimensions.x, dimensions.y);
++  }
++
++  private resizeKawaseBlur(dimensions: THREE.Vector2) {
++    if (
++      this.lastKawaseBlurSize.x === dimensions.x &&
++      this.lastKawaseBlurSize.y === dimensions.y
++    ) {
++      return;
++    }
++    this.lastKawaseBlurSize.copy(dimensions);
++    for (let i = 0; i < 3; i++) {
++      this.kawaseBlurTargets[i].setSize(
++        dimensions.x / 2 ** i,
++        dimensions.y / 2 ** i
++      );
++    }
+   }
+ 
+   applyOcclusionMapToRenderedImage(
+@@ -89,21 +350,31 @@ export class OcclusionPass extends Pass {
+     readBuffer?: THREE.WebGLRenderTarget,
+     writeBuffer?: THREE.WebGLRenderTarget
+   ) {
+-    void [renderer, readBuffer, writeBuffer];
+-    throw new Error(
+-      'OcclusionPass.applyOcclusionMapToRenderedImage is not implemented'
+-    );
++    if (readBuffer && (this.renderToScreen || writeBuffer)) {
++      this.occlusionUniforms.tDiffuse.value = readBuffer.texture;
++      renderer.setRenderTarget(
++        writeBuffer && !this.renderToScreen ? writeBuffer : null
++      );
++      this.occlusionQuad.render(renderer);
++    }
+   }
+ 
+-  dispose() {}
++  dispose() {
++    this.occlusionMeshMaterial.dispose();
++    this.occlusionMapTexture.dispose();
++    for (let i = 0; i < this.kawaseBlurQuads.length; i++) {
++      this.kawaseBlurQuads[i].dispose();
++    }
++  }
+ 
+   updateOcclusionMapUniforms(
+     uniforms: ShaderUniforms,
+     renderer: THREE.WebGLRenderer
+   ) {
+-    void [uniforms, renderer];
+-    throw new Error(
+-      'OcclusionPass.updateOcclusionMapUniforms is not implemented'
+-    );
++    const camera = renderer.xr.getCamera().cameras[0] || this.camera;
++    uniforms.tOcclusionMap.value = this.occlusionMapTexture.texture;
++    uniforms.uOcclusionClipFromWorld.value
++      .copy(camera.projectionMatrix)
++      .multiply(camera.matrixWorldInverse);
+   }
+ }
+diff --git a/src/depth/occlusion/OcclusionUtils.ts b/src/depth/occlusion/OcclusionUtils.ts
+index 5db05a81113b34c430e746ceee8c561d2890acaf..46f58ec06b2cc35447216431c4eb9fefa7880160 100644
+--- a/src/depth/occlusion/OcclusionUtils.ts
++++ b/src/depth/occlusion/OcclusionUtils.ts
+@@ -7,8 +7,8 @@ export class OcclusionUtils {
+    * map. This material is intended to be used with `renderer.overrideMaterial`.
+    * @returns A new instance of THREE.MeshBasicMaterial.
+    */
+-  static createOcclusionMapOverrideMaterial(): THREE.MeshBasicMaterial {
+-    throw new Error('Occlusion shaders are not implemented');
++  static createOcclusionMapOverrideMaterial() {
++    return new THREE.MeshBasicMaterial();
+   }
+ 
+   /**
+@@ -18,8 +18,47 @@ export class OcclusionUtils {
+    * materials.
+    * @param shader - The shader object provided by onBeforeCompile.
+    */
+-  static addOcclusionToShader(shader: Shader): void {
+-    void shader;
+-    throw new Error('Occlusion shaders are not implemented');
++  static addOcclusionToShader(shader: Shader) {
++    shader.uniforms.occlusionEnabled = {value: true};
++    shader.uniforms.tOcclusionMap = {value: null};
++    shader.uniforms.uOcclusionClipFromWorld = {value: new THREE.Matrix4()};
++    shader.defines = {USE_UV: true, DISTANCE: true};
++    shader.vertexShader = shader.vertexShader
++      .replace(
++        '#include <common>',
++        [
++          'uniform mat4 uOcclusionClipFromWorld;',
++          'varying vec4 vOcclusionScreenCoord;',
++          '#include <common>',
++        ].join('\n')
++      )
++      .replace(
++        '#include <fog_vertex>',
++        [
++          '#include <fog_vertex>',
++          'vOcclusionScreenCoord = uOcclusionClipFromWorld * worldPosition;',
++        ].join('\n')
++      );
++    shader.fragmentShader = shader.fragmentShader
++      .replace(
++        'uniform vec3 diffuse;',
++        [
++          'uniform vec3 diffuse;',
++          'uniform bool occlusionEnabled;',
++          'uniform sampler2D tOcclusionMap;',
++          'varying vec4 vOcclusionScreenCoord;',
++        ].join('\n')
++      )
++      .replace(
++        'vec4 diffuseColor = vec4( diffuse, opacity );',
++        [
++          'vec4 diffuseColor = vec4( diffuse, opacity );',
++          'vec2 occlusion_coordinates = 0.5 + 0.5 * vOcclusionScreenCoord.xy / vOcclusionScreenCoord.w;',
++          'vec2 occlusion_sample = texture2D(tOcclusionMap, occlusion_coordinates.xy).rg;',
++          'occlusion_sample = occlusion_sample / max(0.0001, occlusion_sample.g);',
++          'float occlusion_value = clamp(occlusion_sample.r, 0.0, 1.0);',
++          'diffuseColor.a *= occlusionEnabled ? occlusion_value : 1.0;',
++        ].join('\n')
++      );
+   }
+ }
+diff --git a/src/depth/occlusion/kawaseblur.glsl.ts b/src/depth/occlusion/kawaseblur.glsl.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..a2b0775a97e2982a55d4c0ccc10b1119e2165490
+--- /dev/null
++++ b/src/depth/occlusion/kawaseblur.glsl.ts
+@@ -0,0 +1,98 @@
++export const KawaseBlurShader = {
++  name: 'KawaseBlurShader',
++  defines: {
++    MODE: '0',
++  },
++  vertexShader: /* glsl */ `
++    uniform float uBlurSize;
++    uniform vec2 uTexelSize;
++    varying vec2 vTexCoord;
++    varying vec4 uv1;
++    varying vec4 uv2;
++    varying vec4 uv3;
++    varying vec4 uv4;
++
++    void vertCopy(vec2 uv) {}
++
++    void vertUpsample(vec2 uv) {
++        vec2 halfPixel = uTexelSize * 0.5;
++        vec2 offset = vec2(uBlurSize);
++        uv1.xy = uv + vec2(-halfPixel.x * 2.0, 0.0) * offset;
++        uv1.zw = uv + vec2(-halfPixel.x, halfPixel.y) * offset;
++        uv2.xy = uv + vec2(0.0, halfPixel.y * 2.0) * offset;
++        uv2.zw = uv + halfPixel * offset;
++        uv3.xy = uv + vec2(halfPixel.x * 2.0, 0.0) * offset;
++        uv3.zw = uv + vec2(halfPixel.x, -halfPixel.y) * offset;
++        uv4.xy = uv + vec2(0.0, -halfPixel.y * 2.0) * offset;
++        uv4.zw = uv - halfPixel * offset;
++    }
++
++    void vertDownsample(vec2 uv) {
++        vec2 halfPixel = uTexelSize * 0.5;
++        vec2 offset = vec2(uBlurSize);
++        uv1.xy = uv - halfPixel * offset;
++        uv1.zw = uv + halfPixel * offset;
++        uv2.xy = uv - vec2(halfPixel.x, -halfPixel.y) * offset;
++        uv2.zw = uv + vec2(halfPixel.x, -halfPixel.y) * offset;
++    }
++
++    void main() {
++        vTexCoord = uv;
++        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
++        if (MODE == 0) {
++            vertCopy(uv);
++        } else if (MODE == 1) {
++            vertDownsample(uv);
++        } else {
++            vertUpsample(uv);
++        }
++    }
++`,
++  fragmentShader: /* glsl */ `
++    uniform sampler2D tDiffuse;
++    varying vec2 vTexCoord;
++    varying vec4 uv1;
++    varying vec4 uv2;
++    varying vec4 uv3;
++    varying vec4 uv4;
++
++    vec2 getUV0() {
++        return vTexCoord;
++    }
++
++    vec4 fragCopy() {
++        return texture2D(tDiffuse, getUV0());
++    }
++
++    vec4 fragDownsample() {
++        vec4 sum = texture2D(tDiffuse, getUV0()) * 4.0;
++        sum += texture2D(tDiffuse, uv1.xy);
++        sum += texture2D(tDiffuse, uv1.zw);
++        sum += texture2D(tDiffuse, uv2.xy);
++        sum += texture2D(tDiffuse, uv2.zw);
++        return sum * 0.125;
++    }
++
++    vec4 fragUpsample() {
++        vec4 sum = texture2D(tDiffuse, uv1.xy);
++        sum += texture2D(tDiffuse, uv1.zw) * 2.0;
++        sum += texture2D(tDiffuse, uv2.xy);
++        sum += texture2D(tDiffuse, uv2.zw) * 2.0;
++        sum += texture2D(tDiffuse, uv3.xy);
++        sum += texture2D(tDiffuse, uv3.zw) * 2.0;
++        sum += texture2D(tDiffuse, uv4.xy);
++        sum += texture2D(tDiffuse, uv4.zw) * 2.0;
++        return sum * 0.0833;
++    }
++
++    void main(void) {
++        if (MODE == 0) {
++            gl_FragColor = fragCopy();
++        } else if (MODE == 1) {
++            gl_FragColor = fragDownsample();
++        } else {
++            gl_FragColor = fragUpsample();
++        }
++    }
++`,
++};
+diff --git a/src/depth/occlusion/occlusion.glsl.ts b/src/depth/occlusion/occlusion.glsl.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..fd4447fcd904cd30d465b983fdb7bc35d46257c0
+--- /dev/null
++++ b/src/depth/occlusion/occlusion.glsl.ts
+@@ -0,0 +1,31 @@
++// Postprocessing shader which applies occlusion onto the entire rendered frame.
++export const OcclusionShader = {
++  name: 'OcclusionShader',
++  defines: {},
++  vertexShader: /* glsl */ `
++varying vec2 vTexCoord;
++
++void main() {
++    vTexCoord = uv;
++    gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
++}
++    `,
++  fragmentShader: /* glsl */ `
++precision mediump float;
++
++uniform sampler2D tDiffuse;
++uniform sampler2D tOcclusionMap;
++
++varying vec2 vTexCoord;
++
++void main(void) {
++  vec4 diffuse = texture2D(tDiffuse, vTexCoord);
++  vec4 occlusion = texture2D(tOcclusionMap, vTexCoord);
++  float occlusionValue = occlusion.r / max(0.0001, occlusion.g);
++  occlusionValue = clamp(occlusionValue, 0.0, 1.0);
++  gl_FragColor = occlusionValue * diffuse;
++
++  gl_FragColor = sRGBTransferOETF( gl_FragColor );
++}
++`,
++};
+diff --git a/src/depth/occlusion/occlusion_map.glsl.ts b/src/depth/occlusion/occlusion_map.glsl.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..82e7be9d9b58c8cefe59b7d7463a39453cea5e38
+--- /dev/null
++++ b/src/depth/occlusion/occlusion_map.glsl.ts
+@@ -0,0 +1,69 @@
++// Postprocessing to convert a render texture + depth map into an occlusion map.
++export const OcclusionMapShader = {
++  name: 'OcclusionMapShader',
++  defines: {},
++
++  vertexShader: /* glsl */ `
++varying vec2 vTexCoord;
++
++void main() {
++    vTexCoord = uv;
++    gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
++}
++  `,
++
++  fragmentShader: /* glsl */ `
++#include <packing>
++
++precision mediump float;
++
++uniform sampler2D uDepthTexture;
++uniform mat4 uUvTransform;
++uniform float uRawValueToMeters;
++uniform float uAlpha;
++uniform float uViewId;
++uniform bool uFloatDepth;
++
++uniform sampler2D tDiffuse;
++uniform sampler2D tDepth;
++uniform float cameraNear;
++uniform float cameraFar;
++
++varying vec2 vTexCoord;
++
++float DepthGetMeters(in sampler2D depth_texture, in vec2 depth_uv) {
++  // Depth is packed into the luminance and alpha components of its texture.
++  // The texture is in a normalized format, storing raw values that need to be
++  // converted to meters.
++  vec2 packedDepthAndVisibility = texture2D(depth_texture, depth_uv).rg;
++  if (uFloatDepth) {
++    return packedDepthAndVisibility.r * uRawValueToMeters;
++  }
++  return dot(packedDepthAndVisibility, vec2(255.0, 256.0 * 255.0)) * uRawValueToMeters;
++}
++
++float readOrthographicDepth( sampler2D depthSampler, vec2 coord ) {
++  float fragCoordZ = texture2D( depthSampler, coord ).x;
++  // See https://github.com/mrdoob/three.js/issues/23072.
++  #ifdef USE_LOGDEPTHBUF
++    float viewZ = 1.0 - exp2(fragCoordZ * log(cameraFar + 1.0) / log(2.0));
++  #else
++    float viewZ = perspectiveDepthToViewZ(fragCoordZ, cameraNear, cameraFar);
++  #endif
++  return viewZToOrthographicDepth( viewZ, cameraNear, cameraFar );
++}
++
++void main(void) {
++  vec4 texCoord = vec4(vTexCoord, 0, 1);
++  vec2 uv = texCoord.xy;
++  uv.y = 1.0 - uv.y;
++
++  vec4 diffuse = texture2D( tDiffuse, texCoord.xy );
++  highp float real_depth = DepthGetMeters(uDepthTexture, uv);
++  highp float virtual_depth =
++    (readOrthographicDepth(tDepth, texCoord.xy ) *
++    (cameraFar - cameraNear) + cameraNear);
++  gl_FragColor = vec4(step(virtual_depth, real_depth), step(0.001, diffuse.a), 0.0, 0.0);
++}
++`,
++};

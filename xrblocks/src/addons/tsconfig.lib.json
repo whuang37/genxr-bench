@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "paths": {
+      "rapier3d": ["../../node_modules/@dimforge/rapier3d/rapier"],
+      "xrblocks": ["../xrblocks.ts"]
+    }
+  },
+  "include": ["**/*.ts"],
+  "exclude": [
+    "**/cli/**/*.ts",
+    "**/samples/**/*.ts",
+    "**/*.test.ts",
+    "**/*.test.js"
+  ],
+  "references": [{"path": "../../"}]
+}

@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src/",
+    "paths": {
+      "rapier3d": ["./node_modules/@dimforge/rapier3d/rapier"]
+    },
+    "composite": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/addons/**/*", "src/addons/**/cli/*", "src/**/*.test.ts"]
+}

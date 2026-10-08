@@ -1,0 +1,36 @@
+diff --git a/src/ui/internal/UIKitBackend.ts b/src/ui/internal/UIKitBackend.ts
+index 0a6354a7d683c5e801754ff9ee32fff1fb29ef1c..7c1a753c6749c76f201b4e301136eca1d4f19cd8 100644
+--- a/src/ui/internal/UIKitBackend.ts
++++ b/src/ui/internal/UIKitBackend.ts
+@@ -582,7 +582,6 @@ class UIKitNodeBinding {
+       getUIElementKind(this.element) === 'card'
+         ? getUICardEdgeOptions(this.element as UICard)
+         : undefined;
+-    const cornerRadius = numericCornerRadius(properties.cornerRadius);
+     if (!options && this.edge) {
+       this.edge.removeFromParent();
+       this.edge.dispose();
+@@ -591,19 +590,14 @@ class UIKitNodeBinding {
+     }
+     if (options && !this.edge) {
+       this.edge = new UICardEdge({
+-        cardCornerRadius: cornerRadius,
++        cardCornerRadius: numericCornerRadius(properties.cornerRadius),
+       });
+       this.node.add(this.edge);
+       return true;
+     }
+-    if (this.edge && this.edge.cardCornerRadius !== cornerRadius) {
+-      this.edge.removeFromParent();
+-      this.edge.dispose();
+-      this.edge = new UICardEdge({cardCornerRadius: cornerRadius});
+-      this.node.add(this.edge);
+-      return false;
+-    }
+-    this.edge?.setCardCornerRadius(cornerRadius);
++    this.edge?.setCardCornerRadius(
++      numericCornerRadius(properties.cornerRadius)
++    );
+     return false;
+   }
+ 

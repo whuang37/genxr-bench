@@ -1,0 +1,19 @@
+diff --git a/src/context/scene/SceneDetector.ts b/src/context/scene/SceneDetector.ts
+index 0576bb95b58d9327494e42682f8a63584babe665..0c9cef5cf424319bac78d06c34d12f318c026dfc 100644
+--- a/src/context/scene/SceneDetector.ts
++++ b/src/context/scene/SceneDetector.ts
+@@ -337,12 +337,12 @@ export class SceneDetector extends Script {
+       const camera = this.camera;
+       camera.updateMatrixWorld(true);
+       camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
++      const projectionMatrix = camera.projectionMatrix.clone();
++      const matrixWorldInverse = camera.matrixWorldInverse.clone();
+       const visibleObjects = await this.getVisibleObjectsContext(camera);
+       const overlayOnCamera = this.deviceCamera?.loaded === true;
+       const screenshot =
+         await this.screenshotSynthesizer.getScreenshot(overlayOnCamera);
+-      const projectionMatrix = camera.projectionMatrix.clone();
+-      const matrixWorldInverse = camera.matrixWorldInverse.clone();
+       snapshot.som = await createSetOfMarkContext({
+         tree: visibleObjects,
+         image: screenshot,

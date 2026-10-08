@@ -1,0 +1,29 @@
+diff --git a/src/ui/model/ModelViewer.ts b/src/ui/model/ModelViewer.ts
+index 76bf1f03f7215a8a14730229862da0b2b15fae2a..7de7a26c74a737cc49ec8093fab410da6ad3f907 100644
+--- a/src/ui/model/ModelViewer.ts
++++ b/src/ui/model/ModelViewer.ts
+@@ -135,7 +135,6 @@ export class ModelViewer extends Script {
+   private registry?: Registry;
+   private platform?: ModelViewerPlatform;
+   private rotationHitSurface?: RotationHitSurface;
+-  private interactionOwner?: THREE.Object3D;
+   private loadGeneration = 0;
+   private acceptingLoads = true;
+ 
+@@ -239,7 +238,6 @@ export class ModelViewer extends Script {
+     const bounds = getGroupBoundingBox([content]);
+     alignOrigin(content, bounds, this.origin);
+     this.contentRoot = content;
+-    this.interactionOwner ??= content;
+     this.boundingBox.copy(bounds);
+     this.visualRoot.add(content);
+     this.finishModelLoad();
+@@ -406,7 +404,7 @@ export class ModelViewer extends Script {
+   private registerHitSurface(physical: THREE.Object3D): void {
+     if (!this.interaction) return;
+     this.unregisterHitSurfaces.push(
+-      this.interaction.registerHitSurface(physical, this.interactionOwner ?? this)
++      this.interaction.registerHitSurface(physical, this)
+     );
+   }
+ 

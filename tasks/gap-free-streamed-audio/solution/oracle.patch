@@ -1,0 +1,73 @@
+diff --git a/src/sound/AudioPlayer.ts b/src/sound/AudioPlayer.ts
+index e8d1b3af9cbab563cb7cee545058f07b8fa4f85b..c11fdae8cdbb2265049fe0272fdd1e1afd05040b 100644
+--- a/src/sound/AudioPlayer.ts
++++ b/src/sound/AudioPlayer.ts
+@@ -14,7 +14,6 @@ export class AudioPlayer extends Script {
+   private options: AudioPlayerOptions = {};
+   private audioContext?: AudioContext;
+   private audioQueue: AudioBuffer[] = [];
+-  private isPlaying = false;
+   private nextStartTime = 0;
+   private gainNode?: GainNode;
+   private categoryVolumes?: CategoryVolumes;
+@@ -101,40 +100,39 @@ export class AudioPlayer extends Script {
+     }
+ 
+     this.audioQueue.push(audioBuffer);
+-    if (!this.isPlaying) this.playNextAudioBuffer();
++    this.scheduleAudioBuffers();
+   }
+ 
+-  private playNextAudioBuffer() {
+-    if (this.audioQueue.length === 0) {
+-      this.isPlaying = false;
+-      return;
+-    }
+-
+-    this.isPlaying = true;
+-    const audioBuffer = this.audioQueue.shift()!;
+-    const currentTime = this.audioContext!.currentTime;
+-    const startTime = Math.max(this.nextStartTime, currentTime);
++  private scheduleAudioBuffers() {
++    while (
++      this.audioQueue.length > 0 &&
++      this.nextStartTime <=
++        this.audioContext!.currentTime + this.scheduleAheadTime
++    ) {
++      const audioBuffer = this.audioQueue.shift()!;
++      const currentTime = this.audioContext!.currentTime;
++      const startTime = Math.max(this.nextStartTime, currentTime);
+ 
+-    const source = this.audioContext!.createBufferSource();
+-    source.buffer = audioBuffer;
++      const source = this.audioContext!.createBufferSource();
++      source.buffer = audioBuffer;
+ 
+-    // Connect through gain node for volume control
+-    source.connect(this.gainNode || this.audioContext!.destination);
+-    source.onended = () => this.playNextAudioBuffer();
++      // Connect through gain node for volume control
++      source.connect(this.gainNode || this.audioContext!.destination);
++      source.onended = () => this.scheduleAudioBuffers();
+ 
+-    // Start playback
+-    source.start(startTime);
++      // Start playback
++      source.start(startTime);
+ 
+-    this.nextStartTime = startTime + audioBuffer.duration;
++      this.nextStartTime = startTime + audioBuffer.duration;
++    }
+   }
+ 
+   clearQueue() {
+     this.audioQueue = [];
+-    this.isPlaying = false;
+   }
+ 
+   getIsPlaying() {
+-    return this.isPlaying;
++    return this.nextStartTime > this.audioContext!.currentTime;
+   }
+ 
+   getQueueLength() {

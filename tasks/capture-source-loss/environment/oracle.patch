@@ -1,0 +1,28 @@
+diff --git a/src/interaction/Interaction.ts b/src/interaction/Interaction.ts
+index 3e126f4e477f8e0cd2a9a1209004b1bdc83088ac..cd93268a04c2b2ff4bbf64a221d44be637b52212 100644
+--- a/src/interaction/Interaction.ts
++++ b/src/interaction/Interaction.ts
+@@ -275,13 +275,13 @@ export class Interaction {
+     controller: Controller,
+     reason: SelectionEndReason = 'source-lost'
+   ): void {
+-    this.sourceStates.delete(controller);
+     this.cancelCapture(controller, reason);
+     const contact = this.directTouch.remove(controller);
+     if (contact) this.processTouchContact(contact);
+     this.finishTouch(controller);
+     this.clearResolvedRay(controller);
+     this.reticle.clear(controller);
++    this.sourceStates.delete(controller);
+     this.rawIntersections.delete(controller);
+     this.hoverPaths.delete(controller);
+     this.gazeDwell.remove(controller);
+@@ -1170,8 +1170,6 @@ export class Interaction {
+     if (
+       capture.kind === 'target' &&
+       capture.exclusiveControl &&
+-      this.sourceStates.get(controller)?.source ===
+-        capture.selection.publicSource &&
+       this.exclusiveControls.get(capture.exclusiveControl) === controller
+     ) {
+       this.exclusiveControls.delete(capture.exclusiveControl);

@@ -1,0 +1,15 @@
+diff --git a/src/core/Core.ts b/src/core/Core.ts
+index fb0fde8c0aaa2ffe4395671ff53da0a0e6bae043..1aea86ecba8c607a51f15e4a1376c132916efd11 100644
+--- a/src/core/Core.ts
++++ b/src/core/Core.ts
+@@ -516,9 +516,7 @@ export class Core {
+     };
+     this.registry.register(this.renderer);
+ 
+-    this.renderer.xr.addEventListener('sessionstart', () => {
+-      this.renderer.xr.setReferenceSpaceType(options.referenceSpaceType);
+-    });
++    this.renderer.xr.setReferenceSpaceType(options.referenceSpaceType);
+     // For desktop simulator:
+     window.addEventListener('resize', this.onWindowResize);
+ 

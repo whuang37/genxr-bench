@@ -1,0 +1,85 @@
+diff --git a/samples/advanced/portals/Portal.js b/samples/advanced/portals/Portal.js
+index 8b400c4a4e2529260aab5e2298c7d3f61462d7ed..f55cd64466a3577d2957d9128336ed33ab1e1c7e 100644
+--- a/samples/advanced/portals/Portal.js
++++ b/samples/advanced/portals/Portal.js
+@@ -51,13 +51,18 @@ export class Portal extends THREE.Object3D {
+ 
+   // -- Public API ----------------------------------------------------------
+ 
+-  placeAt(worldPoint, faceNormal) {
++  placeAt(worldPoint, faceNormal, hitObjectMatrix) {
+     if (!this.parent) return;
+     this.position.copy(worldPoint);
+     this.parent.worldToLocal(this.position);
+ 
+     if (faceNormal) {
+       const worldNormal = faceNormal.clone();
++      if (hitObjectMatrix) {
++        worldNormal
++          .applyMatrix3(new THREE.Matrix3().getNormalMatrix(hitObjectMatrix))
++          .normalize();
++      }
+       const worldPos = this.getWorldPosition(new THREE.Vector3());
+       this.lookAt(worldPos.add(worldNormal));
+ 
+diff --git a/samples/advanced/portals/PortalGalleryScene.js b/samples/advanced/portals/PortalGalleryScene.js
+index 5ffe398a6c4ce56d7c56255c6c69e64a240df618..2c6c607444b8da63dace1130cd93d0f0ada60b1e 100644
+--- a/samples/advanced/portals/PortalGalleryScene.js
++++ b/samples/advanced/portals/PortalGalleryScene.js
+@@ -205,7 +205,8 @@ export class PortalGalleryScene extends xb.Script {
+       if (depthMesh && event.surface === depthMesh && event.intersection) {
+         this._held.placeAt(
+           event.intersection.point,
+-          event.intersection.normal
++          event.intersection.normal,
++          event.surface.matrixWorld
+         );
+         this._held.setHeld(false);
+         this._held = null;
+diff --git a/src/interaction/ReticlePresenter.ts b/src/interaction/ReticlePresenter.ts
+index 632621c03f5919b2e8b0d70dc0940f40d4156d7e..21176399186ab6a4694cd08b052c941f02c24ee1 100644
+--- a/src/interaction/ReticlePresenter.ts
++++ b/src/interaction/ReticlePresenter.ts
+@@ -8,10 +8,8 @@ import type {
+   ReticlePresentationObserver,
+ } from './InteractionTypes.js';
+ 
++const NORMAL_MATRIX = new THREE.Matrix3();
+ const WORLD_NORMAL = new THREE.Vector3();
+-const WORLD_POSITION = new THREE.Vector3();
+-const WORLD_QUATERNION = new THREE.Quaternion();
+-const WORLD_SCALE = new THREE.Vector3();
+ 
+ /** Presents resolved state. It never performs a raycast or changes targeting. */
+ export class ReticlePresenter implements ReticlePresentationObserver {
+@@ -72,7 +70,11 @@ export class ReticlePresenter implements ReticlePresentationObserver {
+     reticle.position.copy(intersection.point);
+ 
+     if (intersection.normal) {
+-      this.getPresentationNormal(intersection.normal, resolved.hitObject);
++      resolved.hitObject.updateWorldMatrix(true, false);
++      NORMAL_MATRIX.getNormalMatrix(resolved.hitObject.matrixWorld);
++      WORLD_NORMAL.copy(intersection.normal)
++        .applyMatrix3(NORMAL_MATRIX)
++        .normalize();
+     } else {
+       WORLD_NORMAL.copy(ray.direction).negate().normalize();
+     }
+@@ -86,17 +88,4 @@ export class ReticlePresenter implements ReticlePresentationObserver {
+     controller.reticle.targetObject = undefined;
+     controller.reticle.setHovering(false);
+   }
+-
+-  private getPresentationNormal(
+-    normal: THREE.Vector3,
+-    hitObject: THREE.Object3D
+-  ): void {
+-    hitObject.updateWorldMatrix(true, false);
+-    hitObject.matrixWorld.decompose(
+-      WORLD_POSITION,
+-      WORLD_QUATERNION,
+-      WORLD_SCALE
+-    );
+-    WORLD_NORMAL.copy(normal).applyQuaternion(WORLD_QUATERNION).normalize();
+-  }
+ }

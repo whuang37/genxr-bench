@@ -1,0 +1,66 @@
+diff --git a/src/interaction/manipulation/ManipulationManager.ts b/src/interaction/manipulation/ManipulationManager.ts
+index b252685fac7bf8fb2ebce3278b8333f3cbb754ba..6524ea4723712bc1115bb6b4cc71e93ffd462f3a 100644
+--- a/src/interaction/manipulation/ManipulationManager.ts
++++ b/src/interaction/manipulation/ManipulationManager.ts
+@@ -161,7 +161,7 @@ export class ManipulationManager {
+     }
+ 
+     const resolution = capture.manipulation;
+-    if (!resolution || this.sessions.has(capture.surface)) return false;
++    if (!resolution || this.sessions.has(resolution.owner)) return false;
+     const config = normalizeManipulationConfig(
+       resolution.owner.xb?.manipulation
+     );
+@@ -191,7 +191,7 @@ export class ManipulationManager {
+       : undefined;
+     if (session.primaryAction && !baseline) return false;
+ 
+-    this.sessions.set(capture.surface, session);
++    this.sessions.set(session.owner, session);
+     suspendTransformScripts(session.owner);
+     this.roles.set(snapshot.controller, session);
+     try {
+@@ -376,16 +376,14 @@ export class ManipulationManager {
+   }
+ 
+   cancelOwner(owner: THREE.Object3D): boolean {
+-    const session = this.findSessionForOwner(owner);
++    const session = this.sessions.get(owner);
+     if (!session) return false;
+     this.finishSession(session, 'cancel', true);
+     return true;
+   }
+ 
+   isManipulating(object?: THREE.Object3D): boolean {
+-    return object
+-      ? this.findSessionForOwner(object) !== undefined
+-      : this.sessions.size > 0;
++    return object ? this.sessions.has(object) : this.sessions.size > 0;
+   }
+ 
+   isSourceActive(source: Controller): boolean {
+@@ -429,8 +427,8 @@ export class ManipulationManager {
+ 
+   private removeSession(session: Session, suppressAuxiliary: boolean): void {
+     session.phase = undefined;
+-    if (this.sessions.get(session.primary.capture.surface) === session) {
+-      this.sessions.delete(session.primary.capture.surface);
++    if (this.sessions.get(session.owner) === session) {
++      this.sessions.delete(session.owner);
+       resumeTransformScripts(session.owner);
+     }
+     if (this.roles.get(session.primary.snapshot.controller) === session) {
+@@ -446,13 +444,6 @@ export class ManipulationManager {
+     }
+   }
+ 
+-  private findSessionForOwner(owner: THREE.Object3D): Session | undefined {
+-    for (const session of this.sessions.values()) {
+-      if (session.owner === owner) return session;
+-    }
+-    return undefined;
+-  }
+-
+   private startPhase(
+     session: Session,
+     action: ResolvedManipulationAction

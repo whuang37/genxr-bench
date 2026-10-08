@@ -1,0 +1,289 @@
+import {GamepadController} from '../input/GamepadController.js';
+import {Input} from '../input/Input.js';
+import {SimulatorControls} from './SimulatorControls.js';
+import {ISimulatorSettingsPanelElement} from './interfaces/ISimulatorSettingsPanelElement.js';
+import {SimulatorHands} from './SimulatorHands.js';
+import type {
+  SimulatorEnvironment,
+  SimulatorOptions,
+} from './SimulatorOptions.js';
+import {SetSimulatorEnvironmentEvent} from './events/SimulatorEnvironmentEvents.js';
+import {SetSimulatorHandPhysicsEvent} from './events/SimulatorPhysicsEvents.js';
+
+type SimulatorElementsLoader = () => Promise<unknown>;
+
+function loadSimulatorElements() {
+  return import('./internal/interface/SimulatorElements.js');
+}
+
+/** Minimal interface for the gamepad toast element. */
+interface GamepadToastElement extends HTMLElement {
+  show(controls: Record<string, string>, duration?: number): void;
+  flash(message: string, duration?: number): void;
+  dismiss(): void;
+}
+
+/** Minimal interface for the gamepad settings element. */
+interface GamepadSettingsElement extends HTMLElement {
+  bindings: unknown;
+  gamepadController: unknown;
+  show(): void;
+  hide(): void;
+}
+
+/** Standard gamepad button names for display. */
+const BUTTON_NAMES: Record<number, string> = {
+  0: 'A',
+  1: 'B',
+  2: 'X',
+  3: 'Y',
+  4: 'LB',
+  5: 'RB',
+  6: 'LT',
+  7: 'RT',
+  8: 'Back',
+  9: 'Start',
+  10: 'L3',
+  11: 'R3',
+  12: 'D-Up',
+  13: 'D-Down',
+  14: 'D-Left',
+  15: 'D-Right',
+};
+
+function btnName(index: number): string {
+  return BUTTON_NAMES[index] ?? `Btn ${index}`;
+}
+
+export class SimulatorInterface {
+  private elements: HTMLElement[] = [];
+  private interfaceVisible = true;
+  private _gamepadToast?: GamepadToastElement;
+  private _gamepadSettings?: GamepadSettingsElement;
+  private gamepadController?: GamepadController;
+  private simulatorHands?: SimulatorHands;
+  private elementsAvailable?: Promise<boolean>;
+
+  constructor(
+    private readonly simulatorElementsLoader: SimulatorElementsLoader = loadSimulatorElements
+  ) {}
+
+  /**
+   * Initialize the simulator interface.
+   */
+  async init(
+    simulatorOptions: SimulatorOptions,
+    simulatorControls: SimulatorControls,
+    simulatorHands: SimulatorHands,
+    input?: Input,
+    setEnvironment?: (environment: SimulatorEnvironment) => Promise<void>,
+    handPhysicsAvailable = false
+  ) {
+    if (!(await this.ensureElementsAvailable())) return;
+
+    if (setEnvironment) {
+      this.createSimulatorSettingsPanel(
+        simulatorOptions,
+        simulatorControls,
+        setEnvironment,
+        handPhysicsAvailable
+      );
+    }
+    this.createHandPosePanel(simulatorOptions, simulatorHands);
+    this.simulatorHands = simulatorHands;
+    simulatorHands.onHandednessChanged = (handedness) => {
+      this._ensureGamepadToast().flash(
+        `Active Hand: ${handedness === 'left' ? 'Left' : 'Right'}`
+      );
+    };
+    if (input) this._initGamepadUI(input);
+  }
+
+  private ensureElementsAvailable(): Promise<boolean> {
+    this.elementsAvailable ??= this.simulatorElementsLoader()
+      .then(() => true)
+      .catch((error: unknown) => {
+        console.info(
+          'The simulator interface was not shown because Lit is not available. Add "lit" and "lit/" to the import map to enable it.',
+          error
+        );
+        return false;
+      });
+    return this.elementsAvailable;
+  }
+
+  createSimulatorSettingsPanel(
+    simulatorOptions: SimulatorOptions,
+    simulatorControls: SimulatorControls,
+    setEnvironment: (environment: SimulatorEnvironment) => Promise<void>,
+    handPhysicsAvailable: boolean
+  ) {
+    if (simulatorOptions.simulatorSettingsPanel.enabled) {
+      const settingsElement = document.createElement(
+        simulatorOptions.simulatorSettingsPanel.element
+      ) as ISimulatorSettingsPanelElement;
+      settingsElement.environments = simulatorOptions.environments;
+      settingsElement.activeEnvironmentIndex =
+        simulatorOptions.activeEnvironmentIndex;
+      settingsElement.handPhysicsAvailable = handPhysicsAvailable;
+      settingsElement.handPhysicsEnabled = simulatorOptions.handPhysics.enabled;
+      document.body.appendChild(settingsElement);
+      simulatorControls.setSimulatorSettingsPanelElement(settingsElement);
+      settingsElement.addEventListener(
+        SetSimulatorEnvironmentEvent.type,
+        (event: Event) => {
+          if (event instanceof SetSimulatorEnvironmentEvent) {
+            const environment =
+              simulatorOptions.environments[event.environmentIndex];
+            if (!environment) {
+              console.error(
+                `Simulator environment index ${event.environmentIndex} does not exist.`
+              );
+              return;
+            }
+            void setEnvironment(environment).catch((error) => {
+              console.error('Failed to switch simulator environment.', error);
+            });
+          }
+        }
+      );
+      settingsElement.addEventListener(
+        SetSimulatorHandPhysicsEvent.type,
+        (event: Event) => {
+          if (event instanceof SetSimulatorHandPhysicsEvent) {
+            simulatorOptions.handPhysics.enabled = event.enabled;
+          }
+        }
+      );
+      this.elements.push(settingsElement);
+    }
+  }
+
+  createHandPosePanel(
+    simulatorOptions: SimulatorOptions,
+    simulatorHands: SimulatorHands
+  ) {
+    if (simulatorOptions.handPosePanel.enabled) {
+      const handsPanelElement = document.createElement(
+        simulatorOptions.handPosePanel.element
+      );
+      document.body.appendChild(handsPanelElement);
+      simulatorHands.setHandPosePanelElement(handsPanelElement);
+      this.elements.push(handsPanelElement);
+    }
+  }
+
+  hideUiElements() {
+    this.elements = this.elements.filter((el) => el.isConnected);
+    for (const element of this.elements) {
+      element.style.display = 'none';
+    }
+    this.interfaceVisible = false;
+  }
+
+  showUiElements() {
+    this.elements = this.elements.filter((el) => el.isConnected);
+    for (const element of this.elements) {
+      element.style.display = '';
+    }
+    this.interfaceVisible = true;
+  }
+
+  getInterfaceVisible() {
+    return !this.interfaceVisible;
+  }
+
+  toggleInterfaceVisible() {
+    if (this.interfaceVisible) {
+      this.hideUiElements();
+    } else {
+      this.showUiElements();
+    }
+  }
+
+  private _initGamepadUI(input: Input) {
+    const gp = input.gamepadController;
+    this.gamepadController?.removeEventListener(
+      'connected',
+      this.onGamepadConnected
+    );
+    this.gamepadController = gp;
+    gp.addEventListener('connected', this.onGamepadConnected);
+    gp.onOpenSettings = () => this.toggleGamepadSettings(gp);
+  }
+
+  private onGamepadConnected = () => {
+    const gp = this.gamepadController;
+    if (!gp || gp.hasShownToast) return;
+    gp.hasShownToast = true;
+    this.showGamepadToast(gp);
+  };
+
+  dispose() {
+    if (this.gamepadController) {
+      this.gamepadController.removeEventListener(
+        'connected',
+        this.onGamepadConnected
+      );
+      this.gamepadController.onOpenSettings = undefined;
+      this.gamepadController = undefined;
+    }
+    if (this.simulatorHands) {
+      this.simulatorHands.onHandednessChanged = undefined;
+      this.simulatorHands = undefined;
+    }
+    for (const element of this.elements) element.remove();
+    this.elements.length = 0;
+    this._gamepadToast?.remove();
+    this._gamepadToast = undefined;
+    this._gamepadSettings?.remove();
+    this._gamepadSettings = undefined;
+  }
+
+  private _ensureGamepadToast(): GamepadToastElement {
+    if (!this._gamepadToast) {
+      this._gamepadToast = document.createElement(
+        'xrblocks-gamepad-toast'
+      ) as GamepadToastElement;
+      document.body.appendChild(this._gamepadToast);
+    }
+    return this._gamepadToast;
+  }
+
+  showGamepadToast(gp: GamepadController) {
+    const toast = this._ensureGamepadToast();
+    const b = gp.bindings;
+    toast.show({
+      'Left Stick': 'Move (or Hand in Controller mode)',
+      'Right Stick': 'Look',
+      [btnName(b.getBinding('moveUp')) +
+      ' / ' +
+      btnName(b.getBinding('moveDown'))]: 'Up / Down',
+      [btnName(b.getBinding('select'))]: 'Select / Interact',
+      [btnName(b.getBinding('cycleHandPoseLeft')) +
+      ' / ' +
+      btnName(b.getBinding('cycleHandPoseRight'))]: 'Cycle Hand Pose',
+      [btnName(b.getBinding('cycleSimulatorMode'))]: 'Cycle Simulator Mode',
+      [btnName(b.getBinding('toggleUI'))]: 'Toggle UI',
+      [btnName(b.getBinding('toggleHand'))]: 'Swap Active Hand',
+      [btnName(b.getBinding('openSettings'))]: 'Gamepad Settings',
+    });
+  }
+
+  toggleGamepadSettings(gp: GamepadController) {
+    if (!this._gamepadSettings) {
+      this._gamepadSettings = document.createElement(
+        'xrblocks-gamepad-settings'
+      ) as GamepadSettingsElement;
+      this._gamepadSettings.bindings = gp.bindings;
+      this._gamepadSettings.gamepadController = gp;
+      this._gamepadSettings.hidden = true;
+      document.body.appendChild(this._gamepadSettings);
+    }
+    if (this._gamepadSettings.hidden) {
+      this._gamepadSettings.show();
+    } else {
+      this._gamepadSettings.hide();
+    }
+  }
+}

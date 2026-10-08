@@ -1,0 +1,60 @@
+diff --git a/src/world/faces/FaceRecognizer.ts b/src/world/faces/FaceRecognizer.ts
+index d25baf690d19251933e84e802a9ceb9e0d4728f3..4114271ec768ac6eb320bec5ed2a65d5987978a3 100644
+--- a/src/world/faces/FaceRecognizer.ts
++++ b/src/world/faces/FaceRecognizer.ts
+@@ -230,22 +230,32 @@ export class FaceRecognizer extends Script {
+     return backendPromise;
+   }
+ 
+-  // Cached depth-mesh snapshot (cloned geometry + BVH). Reusing a snapshot
+-  // avoids rebuilding its acceleration structure when the source is stable.
++  // Cached depth-mesh snapshot (cloned geometry + BVH). We rebuild it
++  // only when the source depth geometry's position attribute bumps its
++  // version (three.js does this automatically whenever the depth mesh
++  // refreshes via needsUpdate = true). For a static desktop sim the
++  // BVH build therefore amortizes across all detections instead of
++  // running every detection.
+   private cachedDepthMeshSnapshot: THREE.Mesh | null = null;
+   private cachedDepthMeshSource: THREE.BufferGeometry | null = null;
+-  private cachedDepthMeshPositionBuffer: ArrayBufferLike | null = null;
++  private cachedDepthMeshVersion = -1;
+ 
+   private getDepthMeshSnapshot() {
+     const depthMesh = this.depth.depthMesh!;
+     const geometry = this.depth.options.depthMesh.updateFullResolutionGeometry
+       ? depthMesh.geometry
+       : depthMesh.downsampledGeometry || depthMesh.geometry;
+-    const positionBuffer = geometry.attributes.position.array.buffer;
++    // Both BufferAttribute and InterleavedBufferAttribute carry a
++    // `version` field that three.js bumps on `needsUpdate = true`, but
++    // the type for the union doesn't expose it. Cast to read.
++    const positionAttr = geometry.attributes.position as unknown as {
++      version: number;
++    };
++    const version = positionAttr.version;
+     if (
+       this.cachedDepthMeshSnapshot &&
+       this.cachedDepthMeshSource === geometry &&
+-      this.cachedDepthMeshPositionBuffer === positionBuffer
++      this.cachedDepthMeshVersion === version
+     ) {
+       // Source geometry hasn't been updated since last snapshot. Refresh
+       // the cached snapshot's world transform (cheap) and return it as
+@@ -285,7 +295,7 @@ export class FaceRecognizer extends Script {
+     depthMeshSnapshot.updateMatrixWorld(true);
+     this.cachedDepthMeshSnapshot = depthMeshSnapshot;
+     this.cachedDepthMeshSource = geometry;
+-    this.cachedDepthMeshPositionBuffer = positionBuffer;
++    this.cachedDepthMeshVersion = version;
+     return depthMeshSnapshot;
+   }
+ 
+@@ -299,7 +309,7 @@ export class FaceRecognizer extends Script {
+     disposeMaterial(this.cachedDepthMeshSnapshot.material);
+     this.cachedDepthMeshSnapshot = null;
+     this.cachedDepthMeshSource = null;
+-    this.cachedDepthMeshPositionBuffer = null;
++    this.cachedDepthMeshVersion = -1;
+   }
+ 
+   override dispose() {

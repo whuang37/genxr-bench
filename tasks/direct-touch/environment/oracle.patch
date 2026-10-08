@@ -1,0 +1,975 @@
+diff --git a/src/core/Core.ts b/src/core/Core.ts
+index 97c475e41336f3898324d76698d0df7fc2d2a713..1aea86ecba8c607a51f15e4a1376c132916efd11 100644
+--- a/src/core/Core.ts
++++ b/src/core/Core.ts
+@@ -790,6 +790,9 @@ export class Core {
+ 
+     const frameCamera = this.getFrameCamera();
+     this.uiRenderer.reconcile(deltaSeconds, frameCamera);
++    this.interaction.syncTouchCandidates(
++      this.scriptsManager.directTouchCandidates
++    );
+     this.scene.updateMatrixWorld(true);
+     this.interaction.update(this.input.getFrame(), deltaSeconds);
+     this.uiRenderer.present();
+diff --git a/src/core/Script.ts b/src/core/Script.ts
+index 5940b726ac59e135a01513f0ee66c243bdfbd9cf..bef79be8c62d0790a516dd127054fdc7ab8c6f9f 100644
+--- a/src/core/Script.ts
++++ b/src/core/Script.ts
+@@ -225,18 +225,23 @@ export function ScriptMixin<TBase extends Constructor<THREE.Object3D>>(
+      * Call `event.stopPropagation()` to stop bubbling to ancestor Scripts.
+      */
+     onHovering(_event: HoverEvent): void {}
+-    /** Called when a hand's index finger starts touching this object. */
+-    onObjectTouchStart(_event: ObjectTouchStartEvent): void {
+-      throw new Error('Direct touch is not implemented.');
+-    }
+-    /** Called every frame that a hand's index finger touches this object. */
+-    onObjectTouching(_event: ObjectTouchEvent): void {
+-      throw new Error('Direct touch is not implemented.');
+-    }
+-    /** Called when a hand's index finger stops touching this object. */
+-    onObjectTouchEnd(_event: ObjectTouchEvent): void {
+-      throw new Error('Direct touch is not implemented.');
+-    }
++    /**
++     * Called when a hand's index finger starts touching this object.
++     * Direct touch starts the object's selection lifecycle by default. Call
++     * `event.preventDefault()` to handle contact without selecting.
++     */
++    onObjectTouchStart(_event: ObjectTouchStartEvent): void {}
++    /**
++     * Called every frame that a hand's index finger is touching this object.
++     * The object remains selected during these frames unless touch selection
++     * was prevented when contact started.
++     */
++    onObjectTouching(_event: ObjectTouchEvent): void {}
++    /**
++     * Called when a hand's index finger stops touching this object.
++     * This ends the default selection lifecycle after the touch callback.
++     */
++    onObjectTouchEnd(_event: ObjectTouchEvent): void {}
+     /**
+      * Called when a hand starts grabbing this object (touching + pinching).
+      * A grab starts built-in direct-touch manipulation when enabled.
+diff --git a/src/core/components/ScriptsManager.ts b/src/core/components/ScriptsManager.ts
+index c1ca3c69ddc3dfa593818a1d483a931195f0ead4..1cb26d12207adebd62570891fee5fac5ba96c8f2 100644
+--- a/src/core/components/ScriptsManager.ts
++++ b/src/core/components/ScriptsManager.ts
+@@ -10,10 +10,13 @@ import type {
+ } from '../../interaction/InteractionTypes';
+ import {getInteractionSource} from '../../interaction/InteractionTypes';
+ import type {ManipulationEvent} from '../../interaction/manipulation/ManipulationTypes';
++import {getSemanticControl} from '../../interaction/SemanticControl';
+ import {
+   KeyEvent,
+   type HoverEvent,
+   type LongSelectEvent,
++  type ObjectTouchEvent,
++  type ObjectTouchStartEvent,
+   Script,
+   SelectEvent,
+   type SelectEndEvent,
+@@ -78,6 +81,12 @@ const TARGET_DISPATCH: TargetDispatch = {
+     script.onObjectSelectEnd(argument as SelectEndEvent),
+   onObjectLongSelect: (script, argument) =>
+     script.onObjectLongSelect(argument as LongSelectEvent),
++  onObjectTouchStart: (script, argument) =>
++    script.onObjectTouchStart(argument as ObjectTouchStartEvent),
++  onObjectTouching: (script, argument) =>
++    script.onObjectTouching(argument as ObjectTouchEvent),
++  onObjectTouchEnd: (script, argument) =>
++    script.onObjectTouchEnd(argument as ObjectTouchEvent),
+   onHoverEnter: (script, argument) =>
+     script.onHoverEnter(argument as HoverEvent),
+   onHovering: (script, argument) => script.onHovering(argument as HoverEvent),
+@@ -122,6 +131,15 @@ const RAY_TARGET_HOOKS = Object.freeze([
+   'onHoverExit',
+ ] as const satisfies readonly TargetedInteractionHook[]);
+ 
++const DIRECT_TOUCH_TARGET_HOOKS = Object.freeze([
++  'onObjectSelectStart',
++  'onObjectSelectEnd',
++  'onObjectLongSelect',
++  'onObjectTouchStart',
++  'onObjectTouching',
++  'onObjectTouchEnd',
++] as const satisfies readonly TargetedInteractionHook[]);
++
+ const SCRIPT_READY = Promise.resolve();
+ const NO_SCRIPT_CHANGES = Promise.resolve<PromiseSettledResult<void>[]>([]);
+ 
+@@ -136,6 +154,7 @@ export class ScriptsManager
+     PendingInitialization
+   >();
+   private readonly seenScripts = new Set<Script>();
++  private readonly interactionCandidates = new Set<THREE.Object3D>();
+   private readonly failedScripts = new Set<Script>();
+   private readonly syncPromises: Promise<void>[] = [];
+   private readonly traversalStack: THREE.Object3D[] = [];
+@@ -153,18 +172,27 @@ export class ScriptsManager
+     super();
+   }
+ 
++  /** Objects found during the lifecycle traversal that direct touch can use. */
++  get directTouchCandidates(): ReadonlySet<THREE.Object3D> {
++    return this.interactionCandidates;
++  }
++
+   isScript = (object: THREE.Object3D): boolean =>
+     (object as MaybeScript).isXRScript === true;
+ 
+   hasTargetHandler = (
+     object: THREE.Object3D,
+-    _sourceType: InteractionSourceType
++    sourceType: InteractionSourceType
+   ): boolean => {
+     if (!this.isScript(object)) return false;
+ 
+     const script = object as Script;
++    const hooks =
++      sourceType === 'direct-touch'
++        ? DIRECT_TOUCH_TARGET_HOOKS
++        : RAY_TARGET_HOOKS;
+     // Manipulation targets are resolved separately for each hit.
+-    return RAY_TARGET_HOOKS.some((hook) => this.hasIndexedHook(script, hook));
++    return hooks.some((hook) => this.hasIndexedHook(script, hook));
+   };
+ 
+   hasTargetHook = (
+@@ -369,6 +397,7 @@ export class ScriptsManager
+     this.failedScripts.clear();
+     this.hookScripts.clear();
+     this.seenScripts.clear();
++    this.interactionCandidates.clear();
+     this.syncPromises.length = 0;
+ 
+     this.disposalPromise = Promise.resolve().then(() =>
+@@ -424,6 +453,13 @@ export class ScriptsManager
+ 
+   /** Helper for scene traversal to avoid closure allocation. */
+   private checkScript = (object: THREE.Object3D): void => {
++    if (
++      object.xb?.manipulation ||
++      getSemanticControl(object) ||
++      this.hasTargetHandler(object, 'direct-touch')
++    ) {
++      this.interactionCandidates.add(object);
++    }
+     if ((object as MaybeScript).isXRScript) {
+       const script = object as Script;
+       this.seenScripts.add(script);
+@@ -459,6 +495,7 @@ export class ScriptsManager
+       return Promise.reject(new Error('ScriptsManager has been disposed.'));
+     }
+     this.seenScripts.clear();
++    this.interactionCandidates.clear();
+     this.syncPromises.length = 0;
+     this.scanScene(scene);
+ 
+diff --git a/src/input/Input.ts b/src/input/Input.ts
+index 36f95260abf7683910f2bb2433fe915a9e37e434..16fc4aaf9364f7b7f07c49446d6579824b9f4c34 100644
+--- a/src/input/Input.ts
++++ b/src/input/Input.ts
+@@ -6,6 +6,7 @@ import {NUM_HANDS} from '../constants';
+ import {Options} from '../core/Options.js';
+ import {KeyEvent} from '../core/Script';
+ import type {
++  DirectTouchInput,
+   InteractionFrameInput,
+   RaySourceInput,
+ } from '../interaction/InteractionTypes.js';
+@@ -65,8 +66,11 @@ export class Input {
+   );
+   private readonly raySourceInputs: RaySourceInput[] = [];
+   private readonly raySourceSlots = new Map<Controller, RaySourceInput>();
++  private readonly directTouchInputs: DirectTouchInput[] = [];
++  private readonly directTouchSlots: Array<DirectTouchInput | undefined> = [];
+   private readonly interactionFrame: InteractionFrameInput = {
+     raySources: this.raySourceInputs,
++    directTouches: this.directTouchInputs,
+   };
+   /**
+    * Initializes physical input sources. Only called by Core.
+@@ -412,7 +416,7 @@ export class Input {
+     window.removeEventListener('keyup', event);
+   }
+ 
+-  /** Samples current controller and button state. */
++  /** Samples current controller, button, and direct-touch state. */
+   sampleSources() {
+     if (this.controllersEnabled) {
+       for (const controller of this.controllers) {
+@@ -421,6 +425,7 @@ export class Input {
+         this.pinchFilter.updateController(controller);
+       }
+     }
++    this.updateDirectTouchInputs();
+   }
+ 
+   /** Returns the complete physical source state sampled this frame. */
+@@ -468,6 +473,32 @@ export class Input {
+     return 'controller-ray';
+   }
+ 
++  private updateDirectTouchInputs() {
++    this.directTouchInputs.length = 0;
++    for (let handIndex = 0; handIndex < NUM_HANDS; handIndex++) {
++      const controller = this.controllers[handIndex];
++      const indexTip = this.hands[handIndex]?.joints?.['index-finger-tip'];
++      if (!controller || !indexTip) continue;
++      let input = this.directTouchSlots[handIndex];
++      if (!input) {
++        input = {
++          controller,
++          handIndex,
++          point: new THREE.Vector3(),
++          orientation: new THREE.Quaternion(),
++          selected: false,
++        };
++        this.directTouchSlots[handIndex] = input;
++      }
++      input.controller = controller;
++      input.hand = this.hands[handIndex]?.joints?.wrist;
++      indexTip.getWorldPosition(input.point);
++      controller.getWorldQuaternion(input.orientation!);
++      input.selected = controller.userData.selected === true;
++      this.directTouchInputs.push(input);
++    }
++  }
++
+   enableGazeController() {
+     this.activeControllers.add(this.gazeController);
+     this.gazeController.connect();
+@@ -541,5 +572,7 @@ export class Input {
+     this.reticles.clear();
+     this.raySourceInputs.length = 0;
+     this.raySourceSlots.clear();
++    this.directTouchInputs.length = 0;
++    this.directTouchSlots.length = 0;
+   }
+ }
+diff --git a/src/interaction/DirectTouch.ts b/src/interaction/DirectTouch.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..cb6e2a4525ea5bae504a720cd30865ee292d3d18
+--- /dev/null
++++ b/src/interaction/DirectTouch.ts
+@@ -0,0 +1,165 @@
++import * as THREE from 'three';
++
++import type {Controller} from '../input/Controller';
++import {HitRegistry} from './HitRegistry';
++import {HitResolver} from './HitResolver';
++import {type DirectTouchInput, type ResolvedRay} from './InteractionTypes';
++
++export interface DirectTouchContact {
++  readonly phase: 'start' | 'move' | 'end';
++  readonly controller: Controller;
++  readonly resolved?: ResolvedRay;
++  readonly handIndex: number;
++  readonly hand?: THREE.Object3D;
++  readonly point: THREE.Vector3;
++  readonly orientation?: THREE.Quaternion;
++  readonly selected: boolean;
++  readonly endReason?: 'left-target' | 'target-changed' | 'source-lost';
++}
++
++interface ActiveContact {
++  resolved: ResolvedRay;
++  handIndex: number;
++  hand?: THREE.Object3D;
++  point: THREE.Vector3;
++}
++
++/**
++ * Converts registered-bounds contacts into source-neutral contact phases.
++ * Interaction owns callback dispatch, capture, completion, and cancellation.
++ */
++export class DirectTouch {
++  private static readonly EXIT_PADDING = 0.01;
++  private readonly active = new Map<Controller, ActiveContact>();
++  private readonly awaitingExit = new Set<Controller>();
++  private readonly contacts: DirectTouchContact[] = [];
++  private readonly present = new Set<Controller>();
++
++  constructor(
++    private readonly registry: HitRegistry,
++    private readonly resolver: HitResolver
++  ) {}
++
++  update(inputs: readonly DirectTouchInput[]): DirectTouchContact[] {
++    this.contacts.length = 0;
++    this.present.clear();
++    for (const input of inputs) {
++      this.present.add(input.controller);
++      const previous = this.active.get(input.controller);
++      const resolved = this.resolver.resolve(
++        this.registry.intersectionsAt(
++          input.point,
++          previous ? DirectTouch.EXIT_PADDING : 0,
++          previous?.resolved.hitObject
++        ),
++        'direct-touch'
++      );
++
++      if (this.awaitingExit.has(input.controller)) {
++        if (!resolved) this.awaitingExit.delete(input.controller);
++        continue;
++      }
++      if (!previous && !resolved?.target) continue;
++
++      if (!previous && resolved?.target) {
++        const active = {
++          resolved,
++          handIndex: input.handIndex,
++          hand: input.hand,
++          point: input.point.clone(),
++        };
++        this.active.set(input.controller, active);
++        this.contacts.push({
++          phase: 'start',
++          controller: input.controller,
++          resolved,
++          handIndex: input.handIndex,
++          hand: input.hand,
++          point: input.point,
++          orientation: input.orientation,
++          selected: input.selected,
++        });
++      } else if (
++        previous &&
++        resolved &&
++        resolved.target === previous.resolved.target
++      ) {
++        previous.resolved = resolved;
++        previous.point.copy(input.point);
++        this.contacts.push({
++          phase: 'move',
++          controller: input.controller,
++          resolved,
++          handIndex: input.handIndex,
++          hand: input.hand,
++          point: input.point,
++          orientation: input.orientation,
++          selected: input.selected,
++        });
++      } else if (previous) {
++        if (resolved) this.awaitingExit.add(input.controller);
++        this.contacts.push(
++          this.endContact(
++            input.controller,
++            input.selected,
++            resolved?.target ? 'target-changed' : 'left-target',
++            input.handIndex,
++            input.hand,
++            input.point,
++            input.orientation
++          )
++        );
++      }
++    }
++    for (const controller of this.active.keys()) {
++      if (!this.present.has(controller)) {
++        this.contacts.push(this.endContact(controller, false, 'source-lost'));
++      }
++    }
++    for (const controller of this.awaitingExit) {
++      if (!this.present.has(controller)) this.awaitingExit.delete(controller);
++    }
++    return this.contacts;
++  }
++
++  remove(controller: Controller): DirectTouchContact | undefined {
++    this.awaitingExit.delete(controller);
++    return this.active.has(controller)
++      ? this.endContact(controller, false, 'source-lost')
++      : undefined;
++  }
++
++  has(controller: Controller): boolean {
++    return this.active.has(controller);
++  }
++
++  clear(): void {
++    this.active.clear();
++    this.awaitingExit.clear();
++    this.contacts.length = 0;
++    this.present.clear();
++  }
++
++  private endContact(
++    controller: Controller,
++    selected: boolean,
++    endReason: NonNullable<DirectTouchContact['endReason']>,
++    handIndex?: number,
++    hand?: THREE.Object3D,
++    point?: THREE.Vector3,
++    orientation?: THREE.Quaternion
++  ): DirectTouchContact {
++    const previous = this.active.get(controller)!;
++    this.active.delete(controller);
++    return {
++      phase: 'end',
++      controller,
++      handIndex: handIndex ?? previous.handIndex,
++      hand: hand ?? previous.hand,
++      point: point ?? previous.point,
++      orientation,
++      selected,
++      endReason,
++    };
++  }
++}
+diff --git a/src/interaction/HitRegistry.ts b/src/interaction/HitRegistry.ts
+index 161a85e389aec92faab49580a1839139457fa074..ba7c050914ec750f1519c0bd203733f887b2f399 100644
+--- a/src/interaction/HitRegistry.ts
++++ b/src/interaction/HitRegistry.ts
+@@ -13,6 +13,10 @@ export class HitRegistry {
+     RegisteredHitSurface
+   >();
+   private readonly registered = new Set<RegisteredHitSurface>();
++  private readonly touchCandidates = new Map<
++    THREE.Object3D,
++    RegisteredHitSurface
++  >();
+ 
+   constructor(camera?: THREE.Camera) {
+     if (camera) this.raycaster.camera = camera;
+@@ -22,14 +26,36 @@ export class HitRegistry {
+     const entry = {physical, logical};
+     this.mappings.set(physical, entry);
+     this.registered.add(entry);
++    this.touchCandidates.set(physical, entry);
+     return () => {
+       if (this.mappings.get(physical) === entry) {
+         this.mappings.delete(physical);
+       }
+       this.registered.delete(entry);
++      if (this.touchCandidates.get(physical) === entry) {
++        this.touchCandidates.delete(physical);
++      }
+     };
+   }
+ 
++  setWorldTouchCandidates(objects: Iterable<THREE.Object3D>): void {
++    const next = new Set(objects);
++    for (const [physical, entry] of this.touchCandidates) {
++      if (!this.registered.has(entry)) this.touchCandidates.delete(physical);
++    }
++    for (const object of next) {
++      if (this.touchCandidates.has(object)) continue;
++      this.touchCandidates.set(object, {
++        physical: object,
++        logical: object,
++      });
++    }
++    for (const [physical, entry] of this.touchCandidates) {
++      if (this.registered.has(entry)) continue;
++      if (!next.has(physical)) this.touchCandidates.delete(physical);
++    }
++  }
++
+   resolve(object: THREE.Object3D): RegisteredHitSurface {
+     let current: THREE.Object3D | null = object;
+     while (current) {
+@@ -71,6 +97,34 @@ export class HitRegistry {
+     return intersections;
+   }
+ 
++  intersectionsAt(
++    point: THREE.Vector3,
++    padding = 0,
++    preferred?: THREE.Object3D
++  ): THREE.Intersection[] {
++    const intersections: THREE.Intersection[] = [];
++    const box = new THREE.Box3();
++    const center = new THREE.Vector3();
++    for (const {physical} of this.touchCandidates.values()) {
++      if (physical.xb?.pointerEvents === 'none') continue;
++      if (!effectiveVisible(physical)) continue;
++      try {
++        box.setFromObject(physical);
++      } catch {
++        continue;
++      }
++      if (padding > 0) box.expandByScalar(padding);
++      if (box.isEmpty() || !box.containsPoint(point)) continue;
++      intersections.push({
++        distance: box.getCenter(center).distanceTo(point),
++        object: physical,
++        point: point.clone(),
++      });
++    }
++    intersections.sort((a, b) => compareTouchIntersections(a, b, preferred));
++    return intersections;
++  }
++
+   private isBelowScene(object: THREE.Object3D, scene: THREE.Scene): boolean {
+     let current = object.parent;
+     while (current) {
+@@ -114,6 +168,38 @@ function compareRayIntersections(
+   return b.object.id - a.object.id;
+ }
+ 
++function compareTouchIntersections(
++  a: THREE.Intersection,
++  b: THREE.Intersection,
++  preferred?: THREE.Object3D
++): number {
++  if (a.object === b.object) return 0;
++  if (a.object === preferred) return -1;
++  if (b.object === preferred) return 1;
++
++  const aOverlay = isOverlayHit(a.object);
++  const bOverlay = isOverlayHit(b.object);
++  if (aOverlay !== bOverlay) return aOverlay ? -1 : 1;
++
++  const aOrder = getInteractionHitOrder(a.object);
++  const bOrder = getInteractionHitOrder(b.object);
++  if (aOrder !== undefined && bOrder !== undefined && aOrder !== bOrder) {
++    return bOrder - aOrder;
++  }
++
++  return a.distance - b.distance;
++}
++
++function getInteractionHitOrder(object: THREE.Object3D): number | undefined {
++  let current: THREE.Object3D | null = object;
++  while (current) {
++    const order = current.userData.xrblocksHitOrder;
++    if (typeof order === 'number') return order;
++    current = current.parent;
++  }
++  return undefined;
++}
++
+ function isOverlayHit(object: THREE.Object3D): boolean {
+   let current: THREE.Object3D | null = object;
+   while (current) {
+diff --git a/src/interaction/Interaction.ts b/src/interaction/Interaction.ts
+index 2e696292a0a4512c87f35c70815bef0eaadb0a2f..fde2819f930fd1ac0d708a10bf3e15c8750820c0 100644
+--- a/src/interaction/Interaction.ts
++++ b/src/interaction/Interaction.ts
+@@ -3,6 +3,8 @@ import * as THREE from 'three';
+ import {
+   type HoverEvent,
+   type LongSelectEvent,
++  type ObjectTouchEvent,
++  type ObjectTouchStartEvent,
+   type SelectEndEvent,
+   type SelectEvent,
+   type SelectionEndReason,
+@@ -11,6 +13,7 @@ import {
+ import {ReticleOptions, type RaycastMode} from '../core/Options.js';
+ import type {Controller} from '../input/Controller.js';
+ import {objectIsDescendantOf} from '../utils/SceneGraphUtils.js';
++import {DirectTouch, type DirectTouchContact} from './DirectTouch.js';
+ import {GazeDwell} from './GazeDwell.js';
+ import {HitRegistry} from './HitRegistry.js';
+ import {HitResolver} from './HitResolver.js';
+@@ -53,6 +56,15 @@ interface TargetCapture {
+   longSelectDuration: number;
+   longSelectFired: boolean;
+   lastStablePoint: THREE.Vector3;
++  touch: boolean;
++}
++
++interface TouchState {
++  readonly selection: SelectionCapture;
++  readonly handIndex: number;
++  readonly hand?: THREE.Object3D;
++  point: THREE.Vector3;
++  prevented: boolean;
+ }
+ 
+ type ActiveCapture = {kind: 'none'} | {kind: 'auxiliary'} | TargetCapture;
+@@ -69,6 +81,7 @@ export class Interaction {
+   private readonly scene?: THREE.Scene;
+   private readonly registry: HitRegistry;
+   private readonly resolver;
++  private readonly directTouch;
+   private longSelectDuration;
+   private readonly gazeDwell = new GazeDwell();
+   private readonly sourceStates = new Map<Controller, InteractionSourceState>();
+@@ -84,6 +97,7 @@ export class Interaction {
+   >();
+   private readonly captures = new Map<Controller, ActiveCapture>();
+   private readonly exclusiveControls = new Map<THREE.Object3D, Controller>();
++  private readonly touches = new Map<Controller, TouchState>();
+   private readonly suppressedUntilRelease = new Set<Controller>();
+   private readonly scaleIntents = new Map<Controller, number>();
+   private raycastMode: RaycastMode;
+@@ -111,6 +125,7 @@ export class Interaction {
+       this.manipulation,
+       this.registry
+     );
++    this.directTouch = new DirectTouch(this.registry, this.resolver);
+   }
+ 
+   setLongSelectDuration(seconds: number): void {
+@@ -131,6 +146,7 @@ export class Interaction {
+     const nextSources = this.nextFrameSources;
+     nextSources.clear();
+     for (const input of frame.raySources) nextSources.add(input.controller);
++    for (const input of frame.directTouches) nextSources.add(input.controller);
+     for (const controller of this.frameSources) {
+       if (!nextSources.has(controller)) {
+         this.removeSource(controller, 'source-lost');
+@@ -153,6 +169,12 @@ export class Interaction {
+ 
+     const snapshots = this.frameSnapshots;
+     snapshots.length = 0;
++    const touchContacts = this.directTouch.update(frame.directTouches);
++    for (const contact of touchContacts) {
++      const snapshot = this.processTouchContact(contact);
++      if (contact.phase !== 'end') snapshots.push(snapshot);
++    }
++
+     const deliberate = this.hasDeliberateInput(frame);
+     for (const input of frame.raySources) {
+       const snapshot = this.updateRay(input, deltaSeconds, deliberate);
+@@ -201,6 +223,7 @@ export class Interaction {
+     for (const controller of this.frameSources) {
+       this.removeSource(controller, 'source-lost');
+     }
++    this.directTouch.clear();
+     this.frameSnapshots.length = 0;
+     this.rawIntersections.clear();
+     this.frameSources.clear();
+@@ -216,6 +239,11 @@ export class Interaction {
+     return this.registry.register(physical, logical);
+   }
+ 
++  /** Refreshes bounded direct-touch candidates found by the lifecycle pass. */
++  syncTouchCandidates(candidates: Iterable<THREE.Object3D>): void {
++    this.registry.setWorldTouchCandidates(candidates);
++  }
++
+   /** Cancels captures that belong to an object before its Script is disposed. */
+   cancelObject(
+     object: THREE.Object3D,
+@@ -229,6 +257,11 @@ export class Interaction {
+         this.cancelCapture(controller, reason);
+       }
+     }
++    for (const [controller, touch] of this.touches) {
++      if (!selectionBelongsTo(touch.selection, object)) continue;
++      const contact = this.directTouch.remove(controller);
++      if (contact) this.processTouchContact(contact);
++    }
+     for (const [controller, resolved] of this.resolvedRays) {
+       if (objectIsDescendantOf(resolved.surface, object)) {
+         this.clearResolvedRay(controller);
+@@ -242,6 +275,9 @@ export class Interaction {
+     reason: SelectionEndReason = 'source-lost'
+   ): void {
+     this.cancelCapture(controller, reason);
++    const contact = this.directTouch.remove(controller);
++    if (contact) this.processTouchContact(contact);
++    this.finishTouch(controller);
+     this.clearResolvedRay(controller);
+     this.reticle.clear(controller);
+     this.sourceStates.delete(controller);
+@@ -375,6 +411,12 @@ export class Interaction {
+     deltaSeconds: number,
+     deliberate: boolean
+   ): InteractionSourceState | undefined {
++    if (this.directTouch.has(input.controller)) {
++      this.clearResolvedRay(input.controller);
++      this.reticle.clear(input.controller);
++      return undefined;
++    }
++
+     const previousSelected =
+       this.sourceStates.get(input.controller)?.selected ?? false;
+     const snapshot = this.updateRaySnapshot(input);
+@@ -446,7 +488,8 @@ export class Interaction {
+   }
+ 
+   private beginSelection(controller: Controller, gaze = false): void {
+-    if (this.captures.has(controller)) return;
++    if (this.directTouch.has(controller) || this.captures.has(controller))
++      return;
+     const snapshot = this.sourceStates.get(controller);
+     if (!snapshot) return;
+     snapshot.selected = true;
+@@ -481,13 +524,14 @@ export class Interaction {
+       });
+       return;
+     }
+-    this.startTargetCapture(controller, snapshot, resolved, gaze);
++    this.startTargetCapture(controller, snapshot, resolved, false, gaze);
+   }
+ 
+   private startTargetCapture(
+     controller: Controller,
+     snapshot: InteractionSourceState,
+     resolved: ResolvedRay,
++    touch: boolean,
+     gaze = false
+   ): TargetCapture {
+     const selection = this.createSelection(controller, resolved);
+@@ -505,7 +549,7 @@ export class Interaction {
+       ) {
+         action = 'none';
+       }
+-    } else if (wantsManipulation) {
++    } else if (wantsManipulation && !touch) {
+       action = 'manipulate';
+     }
+     if (gaze && semantic?.kind !== 'button') action = 'none';
+@@ -531,6 +575,7 @@ export class Interaction {
+       longSelectDuration: 0,
+       longSelectFired: false,
+       lastStablePoint: resolved.intersection.point.clone(),
++      touch,
+     };
+     this.installCapture(controller, capture);
+     this.runCaptureTransition(controller, () => {
+@@ -654,6 +699,147 @@ export class Interaction {
+     this.callbacks.invokeGlobal('onSelectEnd', event);
+   }
+ 
++  private processTouchContact(
++    contact: DirectTouchContact
++  ): InteractionSourceState {
++    const snapshot = this.updateTouchSnapshot(contact);
++    this.updateTouch(contact, snapshot);
++    if (contact.phase === 'end') snapshot.selected = false;
++    return snapshot;
++  }
++
++  private updateTouch(
++    contact: DirectTouchContact,
++    snapshot: InteractionSourceState
++  ): void {
++    if (contact.phase === 'start' && contact.resolved?.target) {
++      const selection = this.createSelection(
++        contact.controller,
++        contact.resolved
++      );
++      const touchState: TouchState = {
++        selection,
++        handIndex: contact.handIndex,
++        hand: contact.hand,
++        point: contact.point.clone(),
++        prevented: false,
++      };
++      this.touches.set(contact.controller, touchState);
++      try {
++        this.clearResolvedRay(contact.controller);
++        this.reticle.clear(contact.controller);
++        const prevented = this.dispatchTouchStart(touchState);
++        touchState.prevented = prevented;
++        if (!prevented) {
++          this.startTargetCapture(
++            contact.controller,
++            snapshot,
++            contact.resolved,
++            true
++          );
++        }
++      } catch (error) {
++        this.touches.delete(contact.controller);
++        this.cancelFailedCapture(contact.controller, error);
++      }
++      return;
++    }
++
++    const touch = this.touches.get(contact.controller);
++    if (!touch) return;
++    touch.point.copy(contact.point);
++    if (contact.phase === 'move') {
++      try {
++        this.dispatchTouch(touch, 'onObjectTouching');
++      } catch (error) {
++        this.touches.delete(contact.controller);
++        this.cancelFailedCapture(contact.controller, error);
++      }
++      return;
++    }
++
++    this.touches.delete(contact.controller);
++    this.suppressedUntilRelease.add(contact.controller);
++    try {
++      this.dispatchTouch(touch, 'onObjectTouchEnd');
++    } finally {
++      if (!touch.prevented) {
++        const capture = this.captures.get(contact.controller);
++        if (
++          contact.endReason === 'left-target' &&
++          capture?.kind === 'target' &&
++          capture.touch &&
++          capture.action !== 'none'
++        ) {
++          this.endSelection(
++            contact.controller,
++            'released',
++            touch.selection.target,
++            snapshot
++          );
++        } else {
++          this.cancelCapture(
++            contact.controller,
++            contact.endReason === 'source-lost'
++              ? 'source-lost'
++              : 'released-outside'
++          );
++        }
++      }
++    }
++  }
++
++  private finishTouch(controller: Controller): void {
++    const touch = this.touches.get(controller);
++    if (!touch) return;
++    this.touches.delete(controller);
++    this.dispatchTouch(touch, 'onObjectTouchEnd');
++  }
++
++  private dispatchTouchStart(touch: TouchState): boolean {
++    const state = {prevented: false};
++    const event: ObjectTouchStartEvent = {
++      ...this.createTouchEvent(touch),
++      get defaultPrevented() {
++        return state.prevented;
++      },
++      preventDefault() {
++        state.prevented = true;
++      },
++    };
++    dispatchInteractionPath(
++      this.callbacks,
++      touch.selection.scriptPath,
++      'onObjectTouchStart',
++      event
++    );
++    return state.prevented;
++  }
++
++  private dispatchTouch(
++    touch: TouchState,
++    hook: 'onObjectTouching' | 'onObjectTouchEnd'
++  ): void {
++    dispatchInteractionPath(
++      this.callbacks,
++      touch.selection.scriptPath,
++      hook,
++      this.createTouchEvent(touch)
++    );
++  }
++
++  private createTouchEvent(touch: TouchState): ObjectTouchEvent {
++    return {
++      source: touch.selection.publicSource,
++      target: touch.selection.target,
++      surface: touch.selection.surface,
++      handIndex: touch.handIndex,
++      hand: touch.hand,
++      touchPosition: touch.point.clone(),
++      stopPropagation: NOOP_PROPAGATION,
++    };
++  }
++
+   private updateSemantic(
+     capture: TargetCapture,
+     snapshot: InteractionSourceState
+@@ -702,15 +888,16 @@ export class Interaction {
+       return;
+     }
+     const resolved = this.resolvedRays.get(snapshot.controller);
+-    const point =
+-      resolved?.target === capture.selection.target
++    const point = capture.touch
++      ? this.touches.get(snapshot.controller)?.point
++      : resolved?.target === capture.selection.target
+         ? resolved.intersection.point
+         : undefined;
+     if (!point) {
+       capture.longSelectDuration = 0;
+       return;
+     }
+-    const threshold = 0.03;
++    const threshold = snapshot.sourceType === 'direct-touch' ? 0.015 : 0.03;
+     if (point && point.distanceTo(capture.lastStablePoint) > threshold) {
+       capture.longSelectDuration = 0;
+       capture.lastStablePoint.copy(point);
+@@ -803,6 +990,15 @@ export class Interaction {
+     return this.getSourceState(input.controller).updateRay(input);
+   }
+ 
++  private updateTouchSnapshot(
++    contact: DirectTouchContact
++  ): InteractionSourceState {
++    return this.getSourceState(contact.controller).updateTouch(
++      contact.point,
++      contact.orientation
++    );
++  }
++
+   private getSourceState(controller: Controller): InteractionSourceState {
+     let snapshot = this.sourceStates.get(controller);
+     if (snapshot) return snapshot;
+@@ -858,7 +1054,8 @@ export class Interaction {
+     if (
+       frame.raySources.some(
+         (input) => input.sourceType !== 'gaze' && input.selected
+-      )
++      ) ||
++      this.touches.size > 0
+     ) {
+       return true;
+     }
+diff --git a/src/interaction/InteractionTypes.ts b/src/interaction/InteractionTypes.ts
+index c8fc4c00cf44956fd37d3ba95852c4b74a28994c..5c220b0e10c8cf48f610b1cb82abaeeb88af5a6a 100644
+--- a/src/interaction/InteractionTypes.ts
++++ b/src/interaction/InteractionTypes.ts
+@@ -61,9 +61,19 @@ export interface RaySourceInput {
+   orientation?: THREE.Quaternion;
+ }
+ 
++export interface DirectTouchInput {
++  controller: Controller;
++  handIndex: number;
++  hand?: THREE.Object3D;
++  point: THREE.Vector3;
++  selected: boolean;
++  orientation?: THREE.Quaternion;
++}
++
+ /** All physical interaction input sampled for one engine frame. */
+ export interface InteractionFrameInput {
+   readonly raySources: readonly RaySourceInput[];
++  readonly directTouches: readonly DirectTouchInput[];
+ }
+ 
+ /** Mutable internal storage for one controller's current logical source. */
+@@ -95,6 +105,18 @@ export class InteractionSourceState {
+     return this;
+   }
+ 
++  updateTouch(point: THREE.Vector3, orientation?: THREE.Quaternion): this {
++    this.source = getInteractionSource(this.controller, 'direct-touch');
++    this.sourceType = 'direct-touch';
++    this.position.copy(point);
++    if (orientation) this.orientation.copy(orientation);
++    else this.controller.getWorldQuaternion(this.orientation);
++    this.ray = undefined;
++    this.selected = true;
++    this.selectionProgress = undefined;
++    return this;
++  }
++
+   copyFrom(source: InteractionSourceState): this {
+     this.source = source.source;
+     this.sourceType = source.sourceType;
+@@ -150,6 +172,9 @@ export type TargetedInteractionHook =
+   | 'onObjectSelectStart'
+   | 'onObjectSelectEnd'
+   | 'onObjectLongSelect'
++  | 'onObjectTouchStart'
++  | 'onObjectTouching'
++  | 'onObjectTouchEnd'
+   | 'onHoverEnter'
+   | 'onHovering'
+   | 'onHoverExit';

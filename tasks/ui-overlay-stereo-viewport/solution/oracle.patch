@@ -1,0 +1,123 @@
+diff --git a/src/ui/internal/UIOverlayCompositor.ts b/src/ui/internal/UIOverlayCompositor.ts
+index cea74d6d66fff9a555243262cdfc1bd3690ab2a9..579ed3838768643b53a4f23b32aed8aa49e95b3e 100644
+--- a/src/ui/internal/UIOverlayCompositor.ts
++++ b/src/ui/internal/UIOverlayCompositor.ts
+@@ -72,15 +72,27 @@ export class UIOverlayCompositor {
+     this.sourceScene.add(source);
+   }
+ 
++  /** Returns the logical viewport used to lay out one presented view. */
++  getLayoutViewport(
++    renderer: THREE.WebGLRenderer,
++    viewport: ViewportSize
++  ): ViewportSize {
++    const viewSize = this.getXRViewSize(renderer);
++    if (!viewSize) return viewport;
++    const height = Math.max(1, viewport.height);
++    return {
++      width: height * (viewSize.width / viewSize.height),
++      height,
++    };
++  }
++
+   render(renderer: THREE.WebGLRenderer, viewport: ViewportSize): void {
+     if (!this.hasVisibleSource()) return;
+ 
+     const state = this.captureRendererState(renderer);
+     const targetSize = this.getTargetSize(renderer, state.renderTarget);
+     const target = this.ensureRenderTarget(targetSize.width, targetSize.height);
+-    this.updateSourceCamera(
+-      this.getSourceViewport(renderer, viewport, targetSize)
+-    );
++    this.updateSourceCamera(viewport);
+ 
+     try {
+       renderer.xr.isPresenting = false;
+@@ -145,6 +157,8 @@ export class UIOverlayCompositor {
+     renderer: THREE.WebGLRenderer,
+     currentTarget: THREE.WebGLRenderTarget | null
+   ): ViewportSize {
++    const viewSize = this.getXRViewSize(renderer);
++    if (viewSize) return viewSize;
+     const size =
+       currentTarget ?? renderer.getDrawingBufferSize(this.drawingBufferSize);
+     return {
+@@ -153,12 +167,18 @@ export class UIOverlayCompositor {
+     };
+   }
+ 
+-  private getSourceViewport(
+-    _renderer: THREE.WebGLRenderer,
+-    viewport: ViewportSize,
+-    _targetSize: ViewportSize
+-  ): ViewportSize {
+-    return viewport;
++  private getXRViewSize(renderer: THREE.WebGLRenderer): ViewportSize | null {
++    if (!renderer.xr.isPresenting) return null;
++    const cameras = renderer.xr.getCamera()
++      .cameras as readonly THREE.PerspectiveCamera[];
++    if (cameras.length === 0) return null;
++    const width = Math.max(
++      ...cameras.map((camera) => camera.viewport?.width ?? 0)
++    );
++    const height = Math.max(
++      ...cameras.map((camera) => camera.viewport?.height ?? 0)
++    );
++    return width > 0 && height > 0 ? {width, height} : null;
+   }
+ 
+   private ensureRenderTarget(
+diff --git a/src/ui/internal/UIRenderer.ts b/src/ui/internal/UIRenderer.ts
+index 7e1e9f773dbd87713b3b0785f5ba8ef8ad734c9a..397fba0d65b3e0420d9d9422eff0ea39b25143a0 100644
+--- a/src/ui/internal/UIRenderer.ts
++++ b/src/ui/internal/UIRenderer.ts
+@@ -48,6 +48,7 @@ export class UIRenderer {
+   private readonly roots: UIElement[] = [];
+   private readonly connectedRoots = new Set<UIElement>();
+   private readonly viewport = {width: 0, height: 0};
++  private readonly screenViewport = {width: 0, height: 0};
+   private backendState: BackendState = {kind: 'idle'};
+   private renderer?: THREE.WebGLRenderer;
+   private publicScene?: THREE.Scene;
+@@ -150,7 +151,7 @@ export class UIRenderer {
+   /** Renders and blends screen-composited overlays over the current target. */
+   renderScreenOverlays(): void {
+     if (!this.renderer || !this.compositor) return;
+-    this.compositor.render(this.renderer, this.viewport);
++    this.compositor.render(this.renderer, this.screenViewport);
+   }
+ 
+   /** Cancels hit mappings and releases one disconnected public root. */
+@@ -167,6 +168,8 @@ export class UIRenderer {
+     this.connectedRoots.clear();
+     this.viewport.width = 0;
+     this.viewport.height = 0;
++    this.screenViewport.width = 0;
++    this.screenViewport.height = 0;
+     setUIValidator(undefined);
+     this.compositor?.dispose();
+     this.compositor = undefined;
+@@ -254,6 +257,14 @@ export class UIRenderer {
+       canvas?.clientWidth || window.innerWidth || canvas?.width || 1;
+     this.viewport.height =
+       canvas?.clientHeight || window.innerHeight || canvas?.height || 1;
++    const resolvedScreenViewport = this.compositor?.getLayoutViewport(
++      this.renderer!,
++      this.viewport
++    );
++    this.screenViewport.width =
++      resolvedScreenViewport?.width ?? this.viewport.width;
++    this.screenViewport.height =
++      resolvedScreenViewport?.height ?? this.viewport.height;
+     for (const record of this.mounts.values()) {
+       if (!record.connected) continue;
+       const visible = effectiveVisible(record.root);
+@@ -268,7 +279,7 @@ export class UIRenderer {
+       }
+       const mappings = record.mount.commit(
+         ui.theme,
+-        this.viewport,
++        screenComposited ? this.screenViewport : this.viewport,
+         record.order
+       );
+       if (mappings) {

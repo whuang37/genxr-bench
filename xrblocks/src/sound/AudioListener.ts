@@ -1,0 +1,212 @@
+import {Script} from '../core/Script.js';
+
+export interface AudioListenerOptions {
+  sampleRate?: number;
+  channelCount?: number;
+  echoCancellation?: boolean;
+  noiseSuppression?: boolean;
+  autoGainControl?: boolean;
+}
+
+export class AudioListener extends Script {
+  private options: AudioListenerOptions;
+  private audioStream?: MediaStream;
+  audioContext?: AudioContext;
+  private sourceNode?: MediaStreamAudioSourceNode;
+  private processorNode?: AudioWorkletNode;
+  private isCapturing = false;
+  private latestAudioBuffer: ArrayBuffer | null = null;
+  private accumulatedChunks: ArrayBuffer[] = [];
+  private isAccumulating = false;
+  private onAudioData?: (audioBuffer: ArrayBuffer) => void;
+  private onError?: (error: Error) => void;
+
+  constructor(options: AudioListenerOptions = {}) {
+    super();
+    this.options = {
+      sampleRate: 16000,
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      ...options,
+    };
+  }
+
+  async startCapture(
+    callbacks: {
+      onAudioData?: (audioBuffer: ArrayBuffer) => void;
+      onError?: (error: Error) => void;
+      accumulate?: boolean;
+    } = {}
+  ) {
+    if (this.isCapturing) return;
+    this.onAudioData = callbacks.onAudioData;
+    this.onError = callbacks.onError;
+    this.isAccumulating = callbacks.accumulate || false;
+
+    if (this.isAccumulating) {
+      this.accumulatedChunks = [];
+    }
+
+    try {
+      await this.setupAudioCapture();
+      this.isCapturing = true;
+    } catch (error) {
+      console.error('Failed to start audio capture:', error);
+      this.onError?.(error as Error);
+      this.cleanup();
+    }
+  }
+
+  stopCapture() {
+    if (!this.isCapturing) return;
+    this.cleanup();
+    this.isCapturing = false;
+  }
+
+  async setupAudioCapture() {
+    this.audioStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: this.options.echoCancellation,
+        noiseSuppression: this.options.noiseSuppression,
+        autoGainControl: this.options.autoGainControl,
+      },
+      video: false,
+    });
+
+    const actualSampleRate = this.audioStream
+      .getAudioTracks()[0]
+      .getSettings().sampleRate;
+    this.audioContext = new AudioContext({sampleRate: actualSampleRate});
+    await this.setupAudioWorklet();
+
+    this.sourceNode = this.audioContext.createMediaStreamSource(
+      this.audioStream
+    );
+    this.processorNode = new AudioWorkletNode(
+      this.audioContext,
+      'audio-capture-processor'
+    );
+
+    this.processorNode.port.onmessage = (event) => {
+      if (event.data.type === 'audioData') {
+        this.latestAudioBuffer = event.data.data;
+
+        // Accumulate chunks if requested
+        if (this.isAccumulating) {
+          this.accumulatedChunks.push(event.data.data);
+        }
+
+        this.onAudioData?.(event.data.data);
+      }
+    };
+
+    // Check if the AudioContext is running, resume if necessary
+    if (this.audioContext.state === 'suspended') {
+      await this.audioContext.resume();
+    }
+
+    this.sourceNode.connect(this.processorNode);
+  }
+
+  private async setupAudioWorklet() {
+    const processorCode = `
+      class AudioCaptureProcessor extends AudioWorkletProcessor {
+        process(inputs, outputs, parameters) {
+          const input = inputs[0];
+          if (input && input[0]) {
+            const inputData = input[0];
+            const pcmData = new Int16Array(inputData.length);
+            for (let i = 0; i < inputData.length; i++) {
+              pcmData[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32768));
+            }
+            this.port.postMessage({type: 'audioData', data: pcmData.buffer});
+          }
+          return true;
+        }
+      }
+      registerProcessor('audio-capture-processor', AudioCaptureProcessor);
+    `;
+
+    const blob = new Blob([processorCode], {type: 'application/javascript'});
+    const processorURL = URL.createObjectURL(blob);
+    await this.audioContext!.audioWorklet.addModule(processorURL);
+    URL.revokeObjectURL(processorURL);
+  }
+
+  cleanup() {
+    this.processorNode?.disconnect();
+    this.sourceNode?.disconnect();
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      this.audioContext.close();
+    }
+    this.audioStream?.getTracks().forEach((track) => track.stop());
+    this.processorNode = undefined;
+    this.sourceNode = undefined;
+    this.audioContext = undefined;
+    this.audioStream = undefined;
+    this.onAudioData = undefined;
+    this.onError = undefined;
+    this.latestAudioBuffer = null;
+    this.accumulatedChunks = [];
+    this.isAccumulating = false;
+  }
+
+  static isSupported() {
+    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  }
+
+  getIsCapturing() {
+    return this.isCapturing;
+  }
+
+  getLatestAudioBuffer() {
+    return this.latestAudioBuffer;
+  }
+
+  clearLatestAudioBuffer() {
+    this.latestAudioBuffer = null;
+  }
+
+  /**
+   * Gets all accumulated audio chunks as a single combined buffer
+   */
+  getAccumulatedBuffer(): ArrayBuffer | null {
+    if (this.accumulatedChunks.length === 0) return null;
+
+    const totalLength = this.accumulatedChunks.reduce(
+      (sum, chunk) => sum + chunk.byteLength,
+      0
+    );
+    const combined = new ArrayBuffer(totalLength);
+    const combinedArray = new Uint8Array(combined);
+
+    let offset = 0;
+    for (const chunk of this.accumulatedChunks) {
+      combinedArray.set(new Uint8Array(chunk), offset);
+      offset += chunk.byteLength;
+    }
+
+    return combined;
+  }
+
+  /**
+   * Clears accumulated chunks
+   */
+  clearAccumulatedBuffer() {
+    this.accumulatedChunks = [];
+  }
+
+  /**
+   * Gets the number of accumulated chunks
+   */
+  getAccumulatedChunkCount(): number {
+    return this.accumulatedChunks.length;
+  }
+
+  dispose() {
+    this.stopCapture();
+    super.dispose();
+  }
+}

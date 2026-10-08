@@ -1,0 +1,34 @@
+diff --git a/src/camera/XRDeviceCamera.ts b/src/camera/XRDeviceCamera.ts
+index 7ab1290f5314f094bdceb8f535eda7ed903bf098..f17f7720ab205207789d2976926a71be6251f732 100644
+--- a/src/camera/XRDeviceCamera.ts
++++ b/src/camera/XRDeviceCamera.ts
+@@ -231,24 +231,18 @@ export class XRDeviceCamera extends VideoStream<XRDeviceCameraDetails> {
+       this.stream_ = stream;
+       this.video_.srcObject = stream;
+ 
+-      let playbackError: Error | undefined;
+       await new Promise<void>((resolve, reject) => {
+         this.video_.onloadedmetadata = () => {
+           this.handleVideoStreamLoadedMetadata(resolve, reject, true);
+         };
++        // Autoplay policy can still reject play() here.
+         this.video_.play().catch((playError) => {
+-          if (this.disposed_ || this.stream_ !== stream) return;
+-          playbackError =
+-            playError instanceof Error
+-              ? playError
+-              : new Error('Unable to start the camera video stream.');
++          console.warn(
++            'video.play() rejected (may still autoplay):',
++            playError
++          );
+         });
+       });
+-      if (playbackError) {
+-        this.stop_();
+-        this.setState_(StreamState.ERROR, {error: playbackError});
+-        return;
+-      }
+       if (this.disposed_) {
+         this.stop_();
+         return;

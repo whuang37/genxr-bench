@@ -1,0 +1,216 @@
+diff --git a/src/camera/XRDeviceCamera.ts b/src/camera/XRDeviceCamera.ts
+index ae9c212fb3db602d958353b1f14df33d50ae62b8..f17f7720ab205207789d2976926a71be6251f732 100644
+--- a/src/camera/XRDeviceCamera.ts
++++ b/src/camera/XRDeviceCamera.ts
+@@ -37,6 +37,7 @@ export class XRDeviceCamera extends VideoStream<XRDeviceCameraDetails> {
+   simulatorCamera?: SimulatorCameraSource;
+   rgbToDepthParams: RgbToDepthParams;
+   protected videoConstraints_: MediaTrackConstraints;
++  private isInitializing_ = false;
+   private availableDevices_: MediaOrSimulatorMediaDeviceInfo[] = [];
+   private currentDeviceIndex_ = -1;
+   private currentTrackSettings_?: MediaTrackSettings;
+@@ -63,8 +64,21 @@ export class XRDeviceCamera extends VideoStream<XRDeviceCameraDetails> {
+    * @returns A promise that resolves with an
+    * array of video devices.
+    */
+-  async getAvailableVideoDevices(): Promise<MediaOrSimulatorMediaDeviceInfo[]> {
+-    throw new Error('Device camera enumeration is not implemented.');
++  async getAvailableVideoDevices() {
++    if (!navigator.mediaDevices?.enumerateDevices) {
++      console.warn(
++        'navigator.mediaDevices.enumerateDevices() is not supported.'
++      );
++      return [];
++    }
++    const devices: MediaOrSimulatorMediaDeviceInfo[] = [
++      ...(await navigator.mediaDevices.enumerateDevices()),
++    ];
++    if (this.simulatorCamera) {
++      const simulatorDevices = await this.simulatorCamera.enumerateDevices();
++      devices.push(...simulatorDevices);
++    }
++    return devices.filter((device) => device.kind === 'videoinput');
+   }
+ 
+   /**
+@@ -110,8 +124,9 @@ export class XRDeviceCamera extends VideoStream<XRDeviceCameraDetails> {
+   }
+ 
+   protected getDeviceIdFromLabel(label: string): string | null {
+-    void label;
+-    throw new Error('Device camera selection is not implemented.');
++    return (
++      this.availableDevices_.find((x) => x.label == label)?.deviceId ?? null
++    );
+   }
+ 
+   /**
+@@ -120,7 +135,131 @@ export class XRDeviceCamera extends VideoStream<XRDeviceCameraDetails> {
+    * track.
+    */
+   protected async initStream_() {
+-    throw new Error('Device camera stream acquisition is not implemented.');
++    if (this.isInitializing_ || this.disposed_) return;
++    this.isInitializing_ = true;
++    this.setState_(StreamState.INITIALIZING);
++
++    // Reset state for the new stream.
++    this.currentTrackSettings_ = undefined;
++    this.currentDeviceIndex_ = -1;
++    try {
++      console.debug(
++        'Requesting media stream with constraints:',
++        this.videoConstraints_
++      );
++      let stream = null;
++
++      const deviceIdConstraint = this.videoConstraints_.deviceId;
++      let targetDeviceId =
++        typeof deviceIdConstraint === 'string'
++          ? deviceIdConstraint
++          : Array.isArray(deviceIdConstraint)
++            ? deviceIdConstraint[0]
++            : deviceIdConstraint?.exact;
++
++      const useSimulatorCamera =
++        !!this.simulatorCamera &&
++        ((targetDeviceId &&
++          this.availableDevices_.find((d) => d.deviceId === targetDeviceId)
++            ?.groupId === 'simulator') ||
++          (!targetDeviceId &&
++            this.videoConstraints_.facingMode === 'environment'));
++
++      const targetDeviceIdFromLabel = this.options.cameraLabel
++        ? this.getDeviceIdFromLabel(this.options.cameraLabel)
++        : null;
++      if (!this.videoConstraints_.deviceId && targetDeviceIdFromLabel) {
++        this.videoConstraints_ = {
++          deviceId: targetDeviceIdFromLabel,
++          ...this.videoConstraints_,
++        };
++        targetDeviceId = targetDeviceIdFromLabel;
++      }
++
++      if (useSimulatorCamera) {
++        stream = this.simulatorCamera!.getMedia(this.videoConstraints_);
++        if (!stream) {
++          throw new Error('Simulator camera failed to provide a media stream.');
++        }
++      } else {
++        const constraints = {...this.videoConstraints_};
++        if (targetDeviceId === '') {
++          delete constraints.deviceId;
++        }
++        stream = await navigator.mediaDevices.getUserMedia({
++          video: constraints,
++        });
++        if (this.disposed_) {
++          for (const track of stream.getTracks()) track.stop();
++          return;
++        }
++        this.availableDevices_ = await this.getAvailableVideoDevices();
++      }
++
++      if (this.disposed_) {
++        for (const track of stream?.getTracks() ?? []) track.stop();
++        return;
++      }
++
++      const videoTracks = stream?.getVideoTracks() || [];
++
++      if (!videoTracks.length) {
++        throw new Error('MediaStream has no video tracks.');
++      }
++
++      const activeTrack = videoTracks[0];
++      this.currentTrackSettings_ = activeTrack.getSettings();
++      console.debug('Active track settings:', this.currentTrackSettings_);
++
++      if (this.currentTrackSettings_.deviceId) {
++        this.currentDeviceIndex_ = this.availableDevices_.findIndex(
++          (device) => device.deviceId === this.currentTrackSettings_!.deviceId
++        );
++        if (targetDeviceId === '') {
++          this.videoConstraints_.deviceId = {
++            exact: this.currentTrackSettings_.deviceId,
++          };
++        }
++      } else {
++        console.warn('Stream started without deviceId as it was unavailable');
++      }
++
++      // Clear handlers before resetting the element.
++      this.video_.onerror = null;
++      this.video_.onloadedmetadata = null;
++      this.stop_(); // Stop any previous stream before starting new one.
++      this.stream_ = stream;
++      this.video_.srcObject = stream;
++
++      await new Promise<void>((resolve, reject) => {
++        this.video_.onloadedmetadata = () => {
++          this.handleVideoStreamLoadedMetadata(resolve, reject, true);
++        };
++        // Autoplay policy can still reject play() here.
++        this.video_.play().catch((playError) => {
++          console.warn(
++            'video.play() rejected (may still autoplay):',
++            playError
++          );
++        });
++      });
++      if (this.disposed_) {
++        this.stop_();
++        return;
++      }
++
++      const details = {
++        width: this.width,
++        height: this.height,
++        aspectRatio: this.aspectRatio,
++        device: this.getCurrentDevice(),
++        facingMode: this.currentTrackSettings_.facingMode,
++        trackSettings: this.currentTrackSettings_,
++      };
++      this.setState_(StreamState.STREAMING, details);
++    } finally {
++      this.isInitializing_ = false;
++    }
+   }
+ 
+   /**
+@@ -129,8 +268,19 @@ export class XRDeviceCamera extends VideoStream<XRDeviceCameraDetails> {
+    * @param deviceId - Device ID
+    */
+   async setDeviceId(deviceId: string) {
+-    void deviceId;
+-    throw new Error('Device camera selection is not implemented.');
++    const newIndex = this.availableDevices_.findIndex(
++      (device) => device.deviceId === deviceId
++    );
++    if (newIndex === -1) {
++      throw new Error(`Device with ID ${deviceId} not found.`);
++    }
++    if (newIndex === this.currentDeviceIndex_) {
++      console.log(`Device ${deviceId} is already active.`);
++      return;
++    }
++    delete this.videoConstraints_.facingMode;
++    this.videoConstraints_.deviceId = {exact: deviceId};
++    await this.initStream_();
+   }
+ 
+   /**
+@@ -138,8 +288,10 @@ export class XRDeviceCamera extends VideoStream<XRDeviceCameraDetails> {
+    * @param facingMode - facing mode
+    */
+   async setFacingMode(facingMode: VideoFacingModeEnum) {
+-    void facingMode;
+-    throw new Error('Device camera selection is not implemented.');
++    delete this.videoConstraints_.deviceId;
++    this.videoConstraints_.facingMode = facingMode;
++    this.currentDeviceIndex_ = -1;
++    await this.initStream_();
+   }
+ 
+   /**

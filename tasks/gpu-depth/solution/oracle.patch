@@ -1,0 +1,172 @@
+diff --git a/src/depth/Depth.ts b/src/depth/Depth.ts
+index 9f143efa930bbb4198810356bdb29588b3191728..16a8a531a8bf0a333a0462dca563387e2871cbcb 100644
+--- a/src/depth/Depth.ts
++++ b/src/depth/Depth.ts
+@@ -7,6 +7,7 @@ import {clamp} from '../utils/utils';
+ import {DepthMesh} from './DepthMesh';
+ import {DepthOptions} from './DepthOptions';
+ import {DepthTextures} from './DepthTextures';
++import {GPUDepthConverter} from './GPUDepthConverter';
+ import {OcclusionPass} from './occlusion/OcclusionPass';
+ 
+ const DEFAULT_DEPTH_WIDTH = 160;
+@@ -22,6 +23,7 @@ export class Depth {
+   // The main camera.
+   private camera!: THREE.Camera;
+   private renderer!: THREE.WebGLRenderer;
++  private gpuDepthConverter?: GPUDepthConverter;
+ 
+   enabled = false;
+   view: XRView[] = [];
+@@ -90,6 +92,7 @@ export class Depth {
+     this.options = options;
+     this.renderer = renderer;
+     this.enabled = options.enabled;
++    this.gpuDepthConverter = new GPUDepthConverter(renderer);
+ 
+     if (this.options.depthTexture.enabled) {
+       this.depthTextures = new DepthTextures(options);
+@@ -301,9 +304,52 @@ export class Depth {
+   }
+ 
+   updateGPUDepthData(depthData: XRWebGLDepthInformation, viewId: number) {
+-    void depthData;
+-    void viewId;
+-    throw new Error('GPU-optimized depth is not implemented.');
++    this.gpuDepthData[viewId] = depthData;
++    this.updateDepthMatrices(depthData, viewId);
++    // Reading the depth target back is a synchronous GPU stall, and in stereo
++    // this runs once per eye. Only the first view's CPU depth is ever
++    // consumed: getDepth, getDepthInMeters, getVertex and the depth mesh all
++    // read index 0. So the second eye's readback stalls the pipeline for data
++    // nothing looks at.
++    // For now, assume that we need cpu depth only if depth mesh is enabled.
++    // In the future, add a separate option.
++    const needCpuDepth = this.options.depthMesh.enabled && viewId === 0;
++    const cpuDepth =
++      needCpuDepth && this.gpuDepthConverter
++        ? this.gpuDepthConverter.convertGPUToCPU(depthData)
++        : null;
++    if (cpuDepth) {
++      this.cpuDepthData[viewId] = cpuDepth;
++      this.depthDataFormat = 'float32';
++      if (this.depthArray[viewId] instanceof Float32Array) {
++        this.depthArray[viewId].set(new Float32Array(cpuDepth.data));
++      } else {
++        this.depthArray[viewId] = new Float32Array(cpuDepth.data);
++      }
++      this.width = cpuDepth.width;
++      this.height = cpuDepth.height;
++    }
++
++    // Updates Depth Texture.
++    if (this.options.depthTexture.enabled && this.depthTextures) {
++      this.depthTextures.updateNativeTexture(depthData, this.renderer, viewId);
++    }
++
++    if (this.options.depthMesh.enabled && this.depthMesh && viewId == 0) {
++      if (this.shouldUpdateDepthMesh()) {
++        if (cpuDepth) {
++          this.depthMesh.updateDepth(
++            cpuDepth,
++            this.depthProjectionInverseMatrices[0],
++            'float32'
++          );
++        }
++      }
++      this.depthMesh.updatePose(
++        this.depthCameraPositions[0],
++        this.depthCameraRotations[0]
++      );
++    }
+   }
+ 
+   /**
+@@ -340,6 +386,7 @@ export class Depth {
+ 
+   updateLocalDepth(frame: XRFrame) {
+     const session = frame.session;
++    const binding = this.renderer.xr.getBinding();
+ 
+     // Enable or disable depth based on the number of clients.
+     const pausingDepthSupported = session.depthActive !== undefined;
+@@ -363,15 +410,23 @@ export class Depth {
+           const view = pose.views[viewId];
+           this.view[viewId] = view;
+ 
+-          const depthData = frame.getDepthInformation(view);
+-          if (!depthData) {
+-            return;
++          if (session.depthUsage === 'gpu-optimized') {
++            const depthData = binding.getDepthInformation(view);
++            if (!depthData) {
++              return;
++            }
++            this.updateGPUDepthData(depthData, viewId);
++          } else {
++            const depthData = frame.getDepthInformation(view);
++            if (!depthData) {
++              return;
++            }
++            this.updateCPUDepthData(
++              depthData,
++              viewId,
++              session.depthDataFormat ?? 'luminance-alpha'
++            );
+           }
+-          this.updateCPUDepthData(
+-            depthData,
+-            viewId,
+-            session.depthDataFormat ?? 'luminance-alpha'
+-          );
+         }
+       } else {
+         console.error('Pose unavailable in the current frame.');
+diff --git a/src/depth/DepthTextures.ts b/src/depth/DepthTextures.ts
+index 82e718c4213afebf1d5d83d10eb3d9f070472702..419e9116b0588ad1c62c08c7fae96aa6af654000 100644
+--- a/src/depth/DepthTextures.ts
++++ b/src/depth/DepthTextures.ts
+@@ -6,6 +6,7 @@ export class DepthTextures {
+   private float32Arrays: Float32Array[] = [];
+   private uint8Arrays: Uint8Array[] = [];
+   private dataTextures: THREE.DataTexture[] = [];
++  private nativeTextures: THREE.ExternalTexture[] = [];
+   public depthData: XRCPUDepthInformation[] = [];
+ 
+   constructor(private options: DepthOptions) {}
+@@ -71,13 +72,29 @@ export class DepthTextures {
+     renderer: THREE.WebGLRenderer,
+     viewId: number
+   ) {
+-    void depthData;
+-    void renderer;
+-    void viewId;
+-    throw new Error('GPU-optimized depth is not implemented.');
++    if (this.nativeTextures.length < viewId + 1) {
++      this.nativeTextures[viewId] = new THREE.ExternalTexture(
++        depthData.texture
++      );
++    } else {
++      this.nativeTextures[viewId].sourceTexture = depthData.texture;
++    }
++    // fixed in newer revision of three
++    const textureProperties = renderer.properties.get(
++      this.nativeTextures[viewId]
++    ) as {
++      __webglTexture: WebGLTexture;
++      __version: number;
++    };
++    textureProperties.__webglTexture = depthData.texture;
++    textureProperties.__version = 1;
+   }
+ 
+-  get(viewId: number): THREE.ExternalTexture | THREE.DataTexture {
+-    return this.dataTextures[viewId];
++  get(viewId: number) {
++    if (this.dataTextures.length > 0) {
++      return this.dataTextures[viewId];
++    }
++
++    return this.nativeTextures[viewId];
+   }
+ }

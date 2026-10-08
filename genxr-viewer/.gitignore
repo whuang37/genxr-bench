@@ -1,0 +1,15 @@
+# Logs and caches
+node_modules/
+dist/
+*.log
+.DS_Store
+*.local
+
+# Imported jobs and benchmark artifacts (do not commit)
+public/jobs/
+public/xrblocks/
+public/xrblocks-assets/
+
+# Local human ratings & export files
+.ratings/
+exports/

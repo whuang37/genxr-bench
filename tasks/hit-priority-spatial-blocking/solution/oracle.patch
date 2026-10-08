@@ -1,0 +1,98 @@
+diff --git a/src/interaction/HitRegistry.ts b/src/interaction/HitRegistry.ts
+index 811151580945265ded547185b9716a79dcf351c5..85eb8b3dbab78fd2dd891989ac31635add87c756 100644
+--- a/src/interaction/HitRegistry.ts
++++ b/src/interaction/HitRegistry.ts
+@@ -12,10 +12,6 @@ export class HitRegistry {
+     THREE.Object3D,
+     RegisteredHitSurface
+   >();
+-  private readonly rayLayers = new WeakMap<
+-    THREE.Object3D,
+-    'overlay' | 'world'
+-  >();
+   private readonly registered = new Set<RegisteredHitSurface>();
+   private readonly touchCandidates = new Map<
+     THREE.Object3D,
+@@ -25,16 +21,11 @@ export class HitRegistry {
+   register(physical: THREE.Object3D, logical: THREE.Object3D): () => void {
+     const entry = {physical, logical};
+     this.mappings.set(physical, entry);
+-    this.rayLayers.set(
+-      physical,
+-      isOverlayHit(physical) ? 'overlay' : 'world'
+-    );
+     this.registered.add(entry);
+     this.touchCandidates.set(physical, entry);
+     return () => {
+       if (this.mappings.get(physical) === entry) {
+         this.mappings.delete(physical);
+-        this.rayLayers.delete(physical);
+       }
+       this.registered.delete(entry);
+       if (this.touchCandidates.get(physical) === entry) {
+@@ -98,9 +89,7 @@ export class HitRegistry {
+       physical.updateWorldMatrix(true, false);
+       physical.raycast(this.raycaster, intersections);
+     }
+-    intersections.sort((a, b) =>
+-      compareRayIntersections(a, b, this.getRayLayer)
+-    );
++    intersections.sort(compareRayIntersections);
+     return intersections;
+   }
+ 
+@@ -140,16 +129,6 @@ export class HitRegistry {
+     }
+     return false;
+   }
+-
+-  private getRayLayer = (object: THREE.Object3D): 'overlay' | 'world' => {
+-    let current: THREE.Object3D | null = object;
+-    while (current) {
+-      const layer = this.rayLayers.get(current);
+-      if (layer) return layer;
+-      current = current.parent;
+-    }
+-    return isOverlayHit(object) ? 'overlay' : 'world';
+-  };
+ }
+ 
+ /** Recursively raycasts interactive scene branches. */
+@@ -172,12 +151,11 @@ function intersectTree(
+ 
+ function compareRayIntersections(
+   a: THREE.Intersection,
+-  b: THREE.Intersection,
+-  getLayer: (object: THREE.Object3D) => 'overlay' | 'world'
++  b: THREE.Intersection
+ ): number {
+-  const aLayer = getLayer(a.object);
+-  const bLayer = getLayer(b.object);
+-  if (aLayer !== bLayer) return aLayer === 'overlay' ? -1 : 1;
++  const aOverlay = isOverlayHit(a.object);
++  const bOverlay = isOverlayHit(b.object);
++  if (aOverlay !== bOverlay) return aOverlay ? -1 : 1;
+   const distance = a.distance - b.distance;
+   if (distance !== 0) return distance;
+   if (a.object.renderOrder !== b.object.renderOrder) {
+diff --git a/src/ui/internal/UIRenderer.ts b/src/ui/internal/UIRenderer.ts
+index eaba18f70f3eb193019a4da1c76fa7e612269946..761f1141ec3e3680434bd03aeff5219e109fcad3 100644
+--- a/src/ui/internal/UIRenderer.ts
++++ b/src/ui/internal/UIRenderer.ts
+@@ -278,13 +278,12 @@ export class UIRenderer {
+   });
+ 
+   private registerHit(mapping: UIHitMapping, overlay: boolean): () => void {
+-    const unregister = this.interaction.registerHitSurface(
++    mapping.physical.userData.xrblocksHitOrder = mapping.physical.renderOrder;
++    mapping.physical.userData.xrblocksOverlay = overlay;
++    return this.interaction.registerHitSurface(
+       mapping.physical,
+       mapping.logical
+     );
+-    mapping.physical.userData.xrblocksHitOrder = mapping.physical.renderOrder;
+-    mapping.physical.userData.xrblocksOverlay = overlay;
+-    return unregister;
+   }
+ 
+   /** Reports issues from the latest completed mounted layout. */

@@ -1,0 +1,413 @@
+import * as THREE from 'three';
+
+import {getCameraParametersSnapshot} from '../../camera/CameraUtils';
+import {XRDeviceCamera} from '../../camera/XRDeviceCamera';
+import {Script} from '../../core/Script';
+import {Depth} from '../../depth/Depth';
+import {
+  disposeMaterial,
+  disposeObjectChildren,
+  disposeObjectTree,
+} from '../../utils/ThreeDisposal';
+import {WorldOptions} from '../WorldOptions';
+import {DetectedObject} from './DetectedObject';
+import {
+  BaseDetectorBackend,
+  DetectorBackendContext,
+} from './ObjectDetectorBackend';
+import {MediaPipeDetectorBackend} from './backends/MediaPipeDetectorBackend';
+
+/**
+ * Represents a detected object in a normalized format, independent of the specific detector backend used.
+ * Coordinates are normalized typically in the range [0, 1].
+ *
+ * T - The type of additional data associated with the detected object.
+ */
+export interface NormalizedDetectedObject<T> {
+  ymin: number;
+  xmin: number;
+  ymax: number;
+  xmax: number;
+  objectName: string;
+  additionalData?: T;
+}
+
+/**
+ * Represents a snapshot taken from the device camera.
+ * Can contain either a base64 encoded image string or raw ImageData.
+ */
+export interface CameraSnapshot {
+  base64?: string;
+  imageData?: ImageData;
+}
+
+export interface SimulatorDetectedObjectInput<T = unknown> {
+  label: string;
+  position: THREE.Vector3;
+  boundingBox: THREE.Box2;
+  data?: T;
+}
+
+export interface SimulatorObjectDetectionSource {
+  detect(): SimulatorDetectedObjectInput[];
+}
+
+/**
+ * Detects objects in the user's environment with on-device MediaPipe and
+ * returns located objects with 2D and 3D positioning data.
+ */
+export class ObjectDetector extends Script {
+  static dependencies = {
+    options: WorldOptions,
+    deviceCamera: XRDeviceCamera,
+    depth: Depth,
+    camera: THREE.Camera,
+    renderer: THREE.WebGLRenderer,
+  };
+
+  /**
+   * A map from the object's UUID to our custom `DetectedObject` instance.
+   */
+  private _detectedObjects = new Map<string, DetectedObject<unknown>>();
+  private detectorBackendPromise?: Promise<BaseDetectorBackend<unknown>>;
+  private activeClients = new Set<object>();
+  private currentDetectionPromise: Promise<DetectedObject<unknown>[]> | null =
+    null;
+  private lastContinuousDetectionStartedAtMs = -Infinity;
+  private initialized = false;
+  private disposed = false;
+  private simulatorSource?: SimulatorObjectDetectionSource;
+
+  private _debugVisualsGroup?: THREE.Group;
+
+  /**
+   * The latest detected objects.
+   */
+  public detectedObjects: DetectedObject<unknown>[] = [];
+
+  // Injected dependencies
+  private options!: WorldOptions;
+  private deviceCamera!: XRDeviceCamera;
+  private depth!: Depth;
+  private camera!: THREE.PerspectiveCamera;
+  private renderer!: THREE.WebGLRenderer;
+
+  /**
+   * Target device profile used to look up RGB camera intrinsics and pose
+   * for converting detection bounding boxes into world space. Defaults to
+   * `'galaxyxr'`; auto-overridden to `'quest3'` in {@link init} when the
+   * Meta Quest browser is detected. Can be overridden manually before init.
+   */
+  targetDevice = 'galaxyxr';
+
+  /**
+   * Initializes the ObjectDetector.
+   * @override
+   */
+  init({
+    options,
+    deviceCamera,
+    depth,
+    camera,
+    renderer,
+  }: {
+    options: WorldOptions;
+    deviceCamera: XRDeviceCamera;
+    depth: Depth;
+    camera: THREE.PerspectiveCamera;
+    renderer: THREE.WebGLRenderer;
+  }) {
+    this.options = options;
+    this.deviceCamera = deviceCamera;
+    this.depth = depth;
+    this.camera = camera;
+    this.renderer = renderer;
+    this.initialized = true;
+    this.disposed = false;
+
+    if (
+      this.targetDevice === 'galaxyxr' &&
+      typeof navigator !== 'undefined' &&
+      /OculusBrowser|Quest/i.test(navigator.userAgent)
+    ) {
+      this.targetDevice = 'quest3';
+    }
+
+    if (this.options.objects.showDebugVisualizations) {
+      this._debugVisualsGroup = new THREE.Group();
+      // Disable raycasting for the debug group to prevent interaction errors.
+      this._debugVisualsGroup.raycast = () => {};
+      this.add(this._debugVisualsGroup);
+    }
+  }
+
+  /**
+   * Starts continuous object detection for the given client.
+   * If this is the first client, starts the background detection loop.
+   * @param client - The client object requesting object detection.
+   */
+  start(client: object): void {
+    if (this.activeClients.has(client)) {
+      return;
+    }
+    this.activeClients.add(client);
+  }
+
+  /**
+   * Stops continuous object detection for the given client.
+   * If this was the last client, stops the background detection loop.
+   * @param client - The client object that no longer needs object detection.
+   */
+  stop(client: object): void {
+    this.activeClients.delete(client);
+  }
+
+  /**
+   * Called per frame by the engine. If there are active clients,
+   * ensures the continuous object detection is running.
+   */
+  override update() {
+    if (
+      !this.initialized ||
+      this.activeClients.size === 0 ||
+      this.currentDetectionPromise
+    ) {
+      return;
+    }
+
+    const pollingIntervalMs = this.options.objects.pollingIntervalMs;
+    if (
+      pollingIntervalMs > 0 &&
+      performance.now() - this.lastContinuousDetectionStartedAtMs <
+        pollingIntervalMs
+    ) {
+      return;
+    }
+
+    this.runContinuousDetection();
+  }
+
+  private runContinuousDetection() {
+    if (this.currentDetectionPromise) {
+      return;
+    }
+    this.lastContinuousDetectionStartedAtMs = performance.now();
+    this.currentDetectionPromise = this.runDetectionInternal()
+      .then((results) => {
+        if (!this.disposed) {
+          this.detectedObjects = results;
+        }
+        return results;
+      })
+      .finally(() => {
+        this.currentDetectionPromise = null;
+      });
+  }
+
+  /**
+   * Runs object detection or returns the ongoing detection promise.
+   *
+   * - If continuous detection is started (has active clients), returns the
+   *   promise for the next detection result.
+   * - If continuous detection is not started, performs a one-off detection and
+   *   returns the result. If a one-off detection is already in progress, returns
+   *   the promise for that ongoing detection.
+   *
+   * @returns A promise that resolves with an
+   * array of detected `DetectedObject` instances.
+   */
+  runDetection<T = null>(): Promise<DetectedObject<T>[]> {
+    if (!this.initialized) {
+      return Promise.reject(new Error('ObjectDetector is not initialized.'));
+    }
+    if (this.currentDetectionPromise) {
+      return this.currentDetectionPromise as Promise<DetectedObject<T>[]>;
+    }
+    if (this.activeClients.size > 0) {
+      this.runContinuousDetection();
+      return this.currentDetectionPromise! as Promise<DetectedObject<T>[]>;
+    }
+    this.currentDetectionPromise = this.runDetectionInternal().finally(() => {
+      this.currentDetectionPromise = null;
+    });
+    return this.currentDetectionPromise as Promise<DetectedObject<T>[]>;
+  }
+
+  /** Installs or removes the desktop simulator's ground-truth detector. */
+  setSimulatorSource(source?: SimulatorObjectDetectionSource) {
+    this.simulatorSource = source;
+    return this;
+  }
+
+  private async runDetectionInternal<T = null>(): Promise<DetectedObject<T>[]> {
+    this.clearDetectedObjects(); // Clear previous scene results before starting a new detection.
+
+    if (this.simulatorSource) {
+      const detectedObjects = this.simulatorSource.detect().map((input) => {
+        const object = new DetectedObject(
+          input.label,
+          null,
+          input.boundingBox,
+          input.data ?? {}
+        );
+        object.position.copy(input.position);
+        return object;
+      });
+      for (const object of detectedObjects) {
+        this._detectedObjects.set(object.uuid, object);
+        this.add(object);
+      }
+      return detectedObjects as DetectedObject<T>[];
+    }
+
+    const cameraParametersSnapshot = getCameraParametersSnapshot(
+      this.camera,
+      this.renderer.xr.getCamera(),
+      this.deviceCamera,
+      this.targetDevice
+    );
+    if (!cameraParametersSnapshot) {
+      // Device camera not ready yet (warming up); skip until it is available.
+      return [];
+    }
+
+    const context = this.getDetectorContext();
+    const detectorBackendPromise = this.getOrCreateDetectorBackend<T>(context);
+
+    let detectorBackend: BaseDetectorBackend<T>;
+    try {
+      detectorBackend = await detectorBackendPromise;
+    } catch (error) {
+      console.warn(
+        'Failed to load or initialize the MediaPipe object detector:',
+        error
+      );
+      return [];
+    }
+    if (this.disposed) {
+      return [];
+    }
+    const depthMeshSnapshot = this.getDepthMeshSnapshot();
+    try {
+      const detectedObjects = await detectorBackend.run(
+        depthMeshSnapshot,
+        cameraParametersSnapshot
+      );
+      if (this.disposed) {
+        return [];
+      }
+      for (const obj of detectedObjects) {
+        this._detectedObjects.set(obj.uuid, obj);
+        this.add(obj);
+      }
+      return detectedObjects;
+    } finally {
+      this.disposeDepthMeshSnapshot(depthMeshSnapshot);
+    }
+  }
+
+  private getDetectorContext(): DetectorBackendContext {
+    return {
+      options: this.options,
+      deviceCamera: this.deviceCamera,
+      debugVisualsGroup: this._debugVisualsGroup,
+    };
+  }
+
+  private getOrCreateDetectorBackend<T>(
+    context: DetectorBackendContext
+  ): Promise<BaseDetectorBackend<T>> {
+    if (!this.detectorBackendPromise) {
+      this.detectorBackendPromise = Promise.resolve(
+        new MediaPipeDetectorBackend(context)
+      );
+    }
+    return this.detectorBackendPromise as Promise<BaseDetectorBackend<T>>;
+  }
+
+  private getDepthMeshSnapshot() {
+    const depthMesh = this.depth.depthMesh!;
+    const geometry = this.depth.options.depthMesh.updateFullResolutionGeometry
+      ? depthMesh.geometry
+      : depthMesh.downsampledGeometry || depthMesh.geometry;
+    const clonedGeometry = geometry.clone();
+    clonedGeometry.computeBoundingSphere();
+    clonedGeometry.computeBoundingBox();
+    const depthMeshSnapshot = new THREE.Mesh(
+      clonedGeometry,
+      new THREE.MeshBasicMaterial()
+    );
+    depthMesh.getWorldPosition(depthMeshSnapshot.position);
+    depthMesh.getWorldQuaternion(depthMeshSnapshot.quaternion);
+    depthMesh.getWorldScale(depthMeshSnapshot.scale);
+    depthMeshSnapshot.updateMatrixWorld(true);
+    return depthMeshSnapshot;
+  }
+
+  /**
+   * Retrieves a list of currently detected objects.
+   *
+   * @param label - The semantic label to filter by (e.g., 'chair'). If null,
+   * all objects are returned.
+   * @returns An array of `Object` instances.
+   */
+  get<T = null>(label = null): DetectedObject<T>[] {
+    const allObjects = Array.from(this._detectedObjects.values());
+    if (!label) {
+      return allObjects as DetectedObject<T>[];
+    }
+    return allObjects.filter(
+      (obj) => obj.label === label
+    ) as DetectedObject<T>[];
+  }
+
+  /**
+   * Removes all currently detected objects from the scene and internal
+   * tracking.
+   */
+  clear() {
+    this.clearDetectedObjects();
+    this.detectedObjects = [];
+    return this;
+  }
+
+  private clearDetectedObjects() {
+    for (const obj of this._detectedObjects.values()) {
+      disposeObjectTree(obj);
+      this.remove(obj);
+    }
+    this._detectedObjects.clear();
+    if (this._debugVisualsGroup) {
+      disposeObjectChildren(this._debugVisualsGroup);
+    }
+  }
+
+  private disposeDepthMeshSnapshot(depthMeshSnapshot: THREE.Mesh) {
+    depthMeshSnapshot.geometry.dispose();
+    disposeMaterial(depthMeshSnapshot.material);
+  }
+
+  /**
+   * Toggles the visibility of all debug visualizations for detected objects.
+   * @param visible - Whether the visualizations should be visible.
+   */
+  showDebugVisualizations(visible = true) {
+    if (this._debugVisualsGroup) {
+      this._debugVisualsGroup.visible = visible;
+    }
+  }
+
+  override dispose() {
+    this.initialized = false;
+    this.disposed = true;
+    this.activeClients.clear();
+    disposeObjectChildren(this);
+    this.clear(); // Unlinks children so needs to come last
+
+    void this.detectorBackendPromise
+      ?.then((backend) => backend.dispose?.())
+      .catch(() => {});
+    this.detectorBackendPromise = undefined;
+    this.simulatorSource = undefined;
+  }
+}
