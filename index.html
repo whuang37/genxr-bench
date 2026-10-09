@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-5EK2RWYHRM"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'G-5EK2RWYHRM');
+  </script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0c120e">
+  <meta name="description" content="GenXR-Bench: Benchmarking coding agents for interactive XR development. Explore performance, resource use, design scores, and live XR applications.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="GenXR-Bench — Interactive XR Development">
+  <meta property="og:description" content="A benchmark for coding agents building interactive XR. Explore results and try the applications.">
+  <meta property="og:url" content="https://whuang37.github.io/genxr-bench/">
+  <meta property="og:image" content="https://whuang37.github.io/genxr-bench/assets/banner.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="GenXR-Bench: Benchmarking Coding Agents for Interactive XR Development. 112 tasks, 10 models, 3 task families.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="GenXR-Bench">
+  <meta name="twitter:description" content="Benchmarking coding agents for interactive XR development.">
+  <meta name="twitter:image" content="https://whuang37.github.io/genxr-bench/assets/banner.png">
+  <link rel="canonical" href="https://whuang37.github.io/genxr-bench/">
+  <title>GenXR-Bench · Benchmarking Coding Agents for Interactive XR Development</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#results">Skip to results</a>
+  <div class="hero-wrapper">
+    <header class="hero">
+      <video class="hero-motion" muted loop playsinline preload="none" poster="assets/banner-poster.webp" aria-hidden="true" data-src="assets/banner.mp4"></video>
+      <div class="wrap hero-content">
+        <h1><span>GenXR-Bench</span><br>Benchmarking Coding Agents for Interactive XR Development</h1>
+        <div class="authors" role="group" aria-label="Authors">
+          <span>William Huang<sup>1</sup></span>
+          <span>David Li<sup>2</sup></span>
+          <span>Xiang Anthony Chen<sup>1</sup></span>
+          <span>Xun Qian<sup>2</sup></span>
+          <span>Nels Numan<sup>2</sup></span>
+          <span>Zhongyi Zhou<sup>2</sup></span>
+          <span>Hyunsung Cho<sup>3</sup></span>
+          <span>Salman Muin Kayser Chishti<sup>4</sup></span>
+          <span>Ding Xia<sup>5</sup></span>
+          <span>Xincheng Huang<sup>6</sup></span>
+          <span>Jiahao Ren<sup>7</sup></span>
+          <span>Faraz Faruqi<sup>8</sup></span>
+          <span>Cady Xu<sup>2</sup></span>
+          <span>Yang Zhang<sup>1</sup></span>
+          <span>David Kim<sup>2</sup></span>
+          <span>Ruofei Du<sup>2</sup></span>
+        </div>
+        <div class="affiliations" role="group" aria-label="Affiliations">
+          <span><sup>1</sup> University of California, Los Angeles</span>
+          <span><sup>2</sup> Google</span>
+          <span><sup>3</sup> Carnegie Mellon University</span>
+          <span><sup>4</sup> University of Oxford</span>
+          <span><sup>5</sup> The University of Tokyo</span>
+          <span><sup>6</sup> University of British Columbia</span>
+          <span><sup>7</sup> Brown University</span>
+          <span><sup>8</sup> Massachusetts Institute of Technology</span>
+        </div>
+        <div class="paper-links" aria-label="Project resources">
+          <span class="resource-link unavailable" aria-disabled="true" title="Add the paper URL in index.html">↗ &nbsp; Paper <small>soon</small></span>
+          <a class="resource-link" href="https://github.com/whuang37/genxr-bench" target="_blank" rel="noopener">&lt;/&gt; &nbsp; Code</a>
+          <a class="resource-link" href="https://xrblocks.github.io/" target="_blank" rel="noopener"><img src="assets/xrblocks-logo.png" alt="" class="resource-icon" width="20" height="15"> &nbsp; XR Blocks</a>
+          <a class="resource-link secondary" href="#citation">{ } &nbsp; BibTeX</a>
+        </div>
+        <p class="benchmark-counts"><strong>112</strong> tasks <span>·</span> <strong>24</strong> SDK features <span>·</span> <strong>21</strong> SDK repairs <span>·</span> <strong>67</strong> app generation</p>
+      </div>
+      <a class="hero-scroll-indicator" href="#content" aria-label="Scroll to content">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </a>
+    </header>
+  </div>
+
+  <main id="content">
+    <section id="results" class="results wrap section">
+      <div class="section-heading"><h2>Leaderboard</h2><span class="section-note">September 2026</span></div>
+      <div class="results-toolbar">
+        <div class="segmented" role="group" aria-label="Score metric">
+          <button data-score="pass" aria-pressed="true">Overall Pass@1</button>
+          <button data-score="design" aria-pressed="false">Design Score</button>
+        </div>
+        <div class="resource-tabs" role="group" aria-label="Resource metric">
+          <button data-resource="cost" aria-pressed="true">Cost</button>
+          <button data-resource="tokens" aria-pressed="false">Tokens</button>
+          <button data-resource="turns" aria-pressed="false">Agent turns</button>
+        </div>
+      </div>
+      <div class="chart-scroll" tabindex="0" role="region" aria-label="Model comparison graph; scroll horizontally on small screens"><div id="chart" class="chart" aria-label="Interactive model comparison"></div></div>
+      <p id="chart-detail" class="sr-only" aria-live="polite"></p>
+      <div class="table-heading table-actions">
+        <div class="table-title"><h3 id="table-view-title">Benchmark Results</h3></div>
+        <a id="download-results" href="data/benchmark.csv" download>Download CSV ↓</a>
+      </div>
+      <p id="results-error" class="error" role="alert" hidden></p>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Sortable benchmark results"><table id="results-table"><caption class="sr-only">Benchmark results. Select a column heading to sort, or select a row to highlight in the graph.</caption><thead></thead><tbody></tbody></table></div>
+      <p class="table-note muted" id="table-note">Pass@1 is the percentage of tasks with all required assertions passing. Tokens are reported in millions.</p>
+      <noscript><p>Interactive results require JavaScript. Read the <a href="data/benchmark.csv">benchmark CSV</a> and <a href="data/design.csv">design CSV</a> directly.</p></noscript>
+      <section id="abstract" class="abstract-section prose" aria-labelledby="abstract-heading">
+        <h2 id="abstract-heading">Abstract</h2>
+        <p>Coding agents are rapidly advancing from single-file generation to long-horizon repository-scale engineering, yet the evaluation of their capabilities to author interactive extended reality (XR) applications remains an open challenge. Unlike traditional software, XR applications operate within dynamic 3D physical environments where runtime robustness depends jointly on continuous user motion, spatial input, and environmental sensing. We introduce GenXR-Bench, the first benchmark for the end-to-end evaluation of coding agents in XR software development. GenXR-Bench contains 112 expert-authored tasks spanning 24 feature implementations, 21 bug repairs, and 67 application generation tasks. Held-out tests combine scripted and adaptive interactions with programmatic and visual assertions to evaluate core functionality and runtime behavior. GenXR-Bench’s testing suite achieves 96.5% accuracy against blinded expert judgments of 124 candidate applications executed on consumer XR hardware. Evaluating 10 models on GenXR-Bench, we find that the strongest configuration achieves only 50.9% overall Pass@1. Failure analysis identifies recurring misunderstandings in asynchronous sensor lifecycles, physical grounding, and embodied interaction semantics. GenXR-Bench establishes a reproducible testbed for evaluating coding agents in the interactive and physically situated conditions of spatial computing.</p>
+        <h3>Contributions</h3>
+        <ul class="contributions">
+          <li><strong>GenXR-Bench:</strong> An open-source benchmark of 112 expert-authored tasks evaluating coding agents on XR software engineering, spanning SDK-level feature development, bug repair, and end-to-end application synthesis.</li>
+          <li><strong>GenXR-Test:</strong> XR tooling for automated evaluations using scripted kinematic actors, adaptive VLM agents, runtime state assertions, and scoped visual checks in simulated 3D environments.</li>
+          <li><strong>Hardware-Grounded Validation:</strong> A validation study across 372 physical XR device trials demonstrating that simulator-based evaluation achieves 96.5% agreement with expert human judgment with low flakiness (4.0%).</li>
+          <li><strong>Empirical Analysis of Coding Agents in XR:</strong> An evaluation of 10 model configurations identifying key bottlenecks in frontier models, including coordinate-frame handling, sensor lifecycles, and embodied interaction semantics.</li>
+        </ul>
+      </section>
+    </section>
+
+    <section id="playground" class="playground-band">
+      <div class="wrap section">
+        <div class="section-heading">
+          <h2>Generated Application Demos</h2>
+        </div>
+        <div class="playground-controls">
+          <label for="task-select">Task <select id="task-select"></select></label>
+          <div id="model-options" class="model-options" role="group" aria-label="Model output"></div>
+        </div>
+
+        <div id="playground-instructions" class="playground-instructions">
+          <div id="task-markdown" class="instruction-body markdown-content"></div>
+        </div>
+
+        <div id="playground-failure" class="playground-failure" hidden>
+          <p id="failure-text" class="failure-text"></p>
+        </div>
+
+        <div id="app-stage" class="app-stage"></div>
+        <div class="viewer-footer">
+          <button id="reset-app" class="text-button">Reset app ↻</button>
+          <a id="open-app" class="text-button" target="_blank" rel="noopener">Open in new tab ↗</a>
+        </div>
+        <p id="playground-error" class="error" role="alert" hidden></p>
+      </div>
+    </section>
+
+    <section id="demos" class="demos-band">
+      <div class="wrap section">
+        <div class="section-heading"><h2>On-Device Examples</h2></div>
+        <div class="carousel" role="region" aria-label="On-Device Video Demonstrations" tabindex="0">
+          <div class="carousel-nav">
+            <button id="carousel-prev" class="carousel-btn prev" aria-label="Previous demo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button>
+            <div class="carousel-window">
+              <div class="carousel-slides" id="carousel-track">
+                <article class="carousel-slide" data-index="0">
+                  <div class="video-wrapper">
+                    <video data-src="assets/videos/spatial-dominoes.mp4" muted playsinline preload="none" poster="assets/videos/spatial-dominoes.jpg" aria-label="Spatial Dominoes demonstration"></video>
+                  </div>
+                  <h3 class="carousel-task-name">Spatial Dominoes</h3>
+                </article>
+                <article class="carousel-slide" data-index="1">
+                  <div class="video-wrapper">
+                    <video data-src="assets/videos/double-slit.mp4" muted playsinline preload="none" poster="assets/videos/double-slit.jpg" aria-label="Quantum Double Slit demonstration"></video>
+                  </div>
+                  <h3 class="carousel-task-name">Quantum Double Slit</h3>
+                </article>
+                <article class="carousel-slide" data-index="2">
+                  <div class="video-wrapper">
+                    <video data-src="assets/videos/fruit-slicer.mp4" muted playsinline preload="none" poster="assets/videos/fruit-slicer.jpg" aria-label="Fruit Slicer demonstration"></video>
+                  </div>
+                  <h3 class="carousel-task-name">Fruit Slicer</h3>
+                </article>
+                <article class="carousel-slide" data-index="3">
+                  <div class="video-wrapper">
+                    <video data-src="assets/videos/gas-law.mp4" muted playsinline preload="none" poster="assets/videos/gas-law.jpg" aria-label="Gas Law Balloon demonstration"></video>
+                  </div>
+                  <h3 class="carousel-task-name">Gas Law Balloon</h3>
+                </article>
+                <article class="carousel-slide" data-index="4">
+                  <div class="video-wrapper">
+                    <video data-src="assets/videos/rainbow-pen.mp4" muted playsinline preload="none" poster="assets/videos/rainbow-pen.jpg" aria-label="Rainbow Pen demonstration"></video>
+                  </div>
+                  <h3 class="carousel-task-name">Rainbow Pen</h3>
+                </article>
+                <article class="carousel-slide" data-index="5">
+                  <div class="video-wrapper">
+                    <video data-src="assets/videos/virtual-paint-brush.mp4" muted playsinline preload="none" poster="assets/videos/virtual-paint-brush.jpg" aria-label="Virtual Paint Brush demonstration"></video>
+                  </div>
+                  <h3 class="carousel-task-name">Virtual Paint Brush</h3>
+                </article>
+              </div>
+            </div>
+            <button id="carousel-next" class="carousel-btn next" aria-label="Next demo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button>
+          </div>
+          <div class="carousel-dots" id="carousel-dots" role="group" aria-label="Choose demonstration slide">
+            <button class="carousel-dot active" aria-current="true" aria-label="Slide 1: Spatial Dominoes" data-index="0"></button>
+            <button class="carousel-dot" aria-label="Slide 2: Quantum Double Slit" data-index="1"></button>
+            <button class="carousel-dot" aria-label="Slide 3: Fruit Slicer" data-index="2"></button>
+            <button class="carousel-dot" aria-label="Slide 4: Gas Law Balloon" data-index="3"></button>
+            <button class="carousel-dot" aria-label="Slide 5: Rainbow Pen" data-index="4"></button>
+            <button class="carousel-dot" aria-label="Slide 6: Virtual Paint Brush" data-index="5"></button>
+          </div>
+        </div>
+        <p class="demos-note">Testing applies directly to real-world on-device experiences. Demos generated with Google Gemini 3.7 Flash.</p>
+      </div>
+    </section>
+
+    <section id="citation" class="citation-band">
+      <div class="wrap section citation-section">
+        <div class="table-heading"><h2>Citation</h2><button id="copy-citation" class="text-button">Copy BibTeX</button></div>
+        <p class="muted">Draft citation. Publication details will be added.</p>
+        <pre><code id="bibtex">@misc{genxrbench2026,
+  title  = {GenXR-Bench: Benchmarking Coding Agents for Interactive XR Development},
+  author = {William Huang and David Li and Xiang Anthony Chen and
+            Xun Qian and Nels Numan and Zhongyi Zhou and Hyunsung Cho and
+            Salman Muin Kayser Chishti and Ding Xia and Xincheng Huang and
+            Jiahao Ren and Faraz Faruqi and Cady Xu and Yang Zhang and
+            David Kim and Ruofei Du},
+  year   = {2026},
+  note   = {Publication details forthcoming}
+}</code></pre>
+        <p id="copy-status" class="sr-only" aria-live="polite"></p>
+      </div>
+    </section>
+  </main>
+  <footer class="site-footer">
+    <div class="wrap site-footer-inner">
+      <span>GenXR-Bench</span>
+      <a href="#">Back to top ↑</a>
+    </div>
+  </footer>
+</body>
+</html>

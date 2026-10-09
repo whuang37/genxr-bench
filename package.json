@@ -1,0 +1,12 @@
+{
+  "name": "genxr-bench-website",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "http-server . -a 127.0.0.1 -p 4178 -c-1",
+    "build": "node build.js"
+  },
+  "devDependencies": {
+    "http-server": "14.1.1"
+  }
+}

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Minimalist curved XR Headset Visor Outline -->
+  <path d="M15 23 C18 16 46 16 49 23 C53 29 53 37 49 43 C42 49 37 47 32 40 C27 47 22 49 15 43 C11 37 11 29 15 23 Z" 
+        stroke="#1a1a1a" 
+        stroke-width="4.5" 
+        stroke-linecap="round" 
+        stroke-linejoin="round" 
+        fill="none"/>
+  <!-- Top Inner Accent Brow Curve -->
+  <path d="M23 23 C28 21.5 36 21.5 41 23" 
+        stroke="#1a1a1a" 
+        stroke-width="4.5" 
+        stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GenXR-Bench · Room Scale Cell Explorer (DeepSeek v4.1 Flash)</title>
+  <link rel="icon" href="../../../assets/favicon.svg" type="image/svg+xml">
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #111; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #fff; }
+    canvas { display: block; width: 100% !important; height: 100% !important; touch-action: none; }
+    #status { position: absolute; z-index: 1000; inset: 0; display: grid; place-content: center; background: #f5f7f5; color: #264235; text-align: center; padding: 30px; font-size: 15px; transition: opacity 0.3s ease; }
+    #status[hidden] { display: none; opacity: 0; pointer-events: none; }
+  </style>
+  <script type="importmap">
+    {"imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
+      "three/": "https://cdn.jsdelivr.net/npm/three@0.184.0/",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/",
+      "troika-three-text": "https://cdn.jsdelivr.net/gh/protectwise/troika@028b81cf308f0f22e5aa8e78196be56ec1997af5/packages/troika-three-text/src/index.js",
+      "troika-three-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-three-utils/src/index.js",
+      "troika-worker-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-worker-utils/src/index.js",
+      "bidi-js": "https://esm.sh/bidi-js@%5E1.0.2?target=es2022",
+      "webgl-sdf-generator": "https://esm.sh/webgl-sdf-generator@1.1.1/es2022/webgl-sdf-generator.mjs",
+      "xrblocks": "https://cdn.jsdelivr.net/npm/xrblocks@0.21.0/build/xrblocks.js",
+      "xrblocks/addons/": "https://cdn.jsdelivr.net/npm/xrblocks@0.21.0/build/addons/",
+      "@pmndrs/uikit": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit@1.0.64/dist/index.min.js",
+      "@pmndrs/uikit-pub-sub": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit-pub-sub@1.0.64/dist/index.min.js",
+      "@pmndrs/msdfonts": "https://cdn.jsdelivr.net/npm/@pmndrs/msdfonts@1.0.64/dist/index.min.js",
+      "@preact/signals-core": "https://cdn.jsdelivr.net/npm/@preact/signals-core@1.14.0/dist/signals-core.mjs",
+      "yoga-layout/load": "https://cdn.jsdelivr.net/npm/yoga-layout@3.2.1/dist/src/load.js",
+      "lit": "https://esm.sh/lit@3.3.1",
+      "lit/": "https://esm.sh/lit@3.3.1/",
+      "three-pathfinding": "https://cdn.jsdelivr.net/npm/three-pathfinding@1.3.0/dist/three-pathfinding.module.js",
+      "@dimforge/rapier3d-simd-compat": "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-simd-compat@0.19.2/rapier.mjs"
+    }}
+  </script>
+
+  <script type="module">
+    import * as xb from 'xrblocks';
+
+    if (xb.SimulatorControls) {
+      const origControlsInit = xb.SimulatorControls.prototype.init;
+      xb.SimulatorControls.prototype.init = function(args) {
+        if (args && args.simulatorOptions) {
+          args.simulatorOptions.defaultMode = xb.SimulatorMode.POSE;
+        }
+        const res = origControlsInit.apply(this, arguments);
+        this.setSimulatorMode(xb.SimulatorMode.POSE);
+        return res;
+      };
+    }
+
+    // 1. Resolve DOMContentLoaded race condition:
+    // If document is already loaded when main.js registers its listener, trigger it promptly.
+    const _origAddEventListener = document.addEventListener.bind(document);
+    document.addEventListener = function(type, listener, options) {
+      if (type === 'DOMContentLoaded' && (document.readyState === 'interactive' || document.readyState === 'complete')) {
+        setTimeout(listener, 0);
+        return;
+      }
+      return _origAddEventListener(type, listener, options);
+    };
+
+    // 2. Patch xb.Options.prototype.parseUrlParams to force desktop simulator with all controls enabled:
+    const origParse = xb.Options.prototype.parseUrlParams;
+    xb.Options.prototype.parseUrlParams = function() {
+      if (origParse) origParse.call(this);
+      this.formFactor = 'desktop';
+      this.enableSimulator = true;
+      if (!this.xrButton) this.xrButton = {};
+      this.xrButton.alwaysAutostartSimulator = true;
+      this.xrButton.showEnterSimulatorButton = true;
+
+      if (!this.simulator) this.simulator = {};
+      this.simulator.simulatorSettingsPanel = this.simulator.simulatorSettingsPanel || {};
+      this.simulator.simulatorSettingsPanel.enabled = true;
+      this.simulator.handPosePanel = this.simulator.handPosePanel || {};
+      this.simulator.handPosePanel.enabled = true;
+      this.simulator.instructions = this.simulator.instructions || {};
+      this.simulator.instructions.enabled = true;
+      this.simulator.instructions.showAutomatically = false;
+      this.simulator.modeToggle = this.simulator.modeToggle || {};
+      this.simulator.modeToggle.enabled = true;
+      this.simulator.defaultMode = xb.SimulatorMode.POSE;
+    };
+
+    // 3. Monitor initialization to dismiss loading splash
+    const checkInit = setInterval(() => {
+      const canvas = document.querySelector('canvas');
+      const xrWrapper = document.getElementById('XRButtonWrapper');
+      if (canvas || xrWrapper) {
+        const status = document.getElementById('status');
+        if (status) status.hidden = true;
+        clearInterval(checkInit);
+      }
+    }, 200);
+  </script>
+
+  <style id="genxr-scrollbar-suppression">
+    * {
+      scrollbar-width: none !important;
+      -ms-overflow-style: none !important;
+    }
+    *::-webkit-scrollbar {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+    }
+    html, body {
+      margin: 0 !important;
+      padding: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      overflow: hidden !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="status" role="status">Loading XR Blocks Simulator…</div>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

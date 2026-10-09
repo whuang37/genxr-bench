@@ -1,0 +1,626 @@
+// Auto-generated at build time from data/benchmark.csv, data/design.csv, and data/demos.json.
+// Enables synchronous startup rendering without network fetch delay.
+
+export const staticResults = [
+  {
+    "id": "claude-opus-5-med",
+    "model": "claude-opus-5",
+    "effort": "med",
+    "family": "anthropic",
+    "pass": 50.9,
+    "repair": 85.7,
+    "feature": 29.2,
+    "app": 47.8,
+    "turns": 74.1,
+    "cost": 5.74,
+    "tokens": 6.17,
+    "align": 3.42,
+    "visual": 3.84,
+    "anchor": 4.29,
+    "scale": 4.16,
+    "input": 3.56,
+    "physics": 3.44,
+    "feedback": 3.51,
+    "error": 3.91,
+    "context": 4.04,
+    "clutter": 4.47,
+    "design": 3.86,
+    "color": "#d48158"
+  },
+  {
+    "id": "gpt-5.6-sol-xhigh",
+    "model": "gpt-5.6-sol",
+    "effort": "xhigh",
+    "family": "openai",
+    "pass": 44.6,
+    "repair": 95.2,
+    "feature": 29.2,
+    "app": 34.3,
+    "turns": 26.4,
+    "cost": 2.95,
+    "tokens": 1.74,
+    "align": 3.53,
+    "visual": 4.19,
+    "anchor": 4.44,
+    "scale": 4.41,
+    "input": 3.59,
+    "physics": 3.59,
+    "feedback": 3.66,
+    "error": 4.06,
+    "context": 4.16,
+    "clutter": 4.62,
+    "design": 4.03,
+    "color": "#37866e"
+  },
+  {
+    "id": "gemini-3.8-flash-high",
+    "model": "gemini-3.8-flash",
+    "effort": "high",
+    "family": "google",
+    "pass": 42.9,
+    "repair": 90.5,
+    "feature": 25,
+    "app": 34.3,
+    "turns": 127,
+    "cost": 1.73,
+    "tokens": 11.91,
+    "align": 3.24,
+    "visual": 3.73,
+    "anchor": 4.27,
+    "scale": 4.08,
+    "input": 3.35,
+    "physics": 3.18,
+    "feedback": 3.27,
+    "error": 3.76,
+    "context": 3.88,
+    "clutter": 4.37,
+    "design": 3.71,
+    "color": "#778eb7"
+  },
+  {
+    "id": "gemini-3.7-flash-high",
+    "model": "gemini-3.7-flash",
+    "effort": "high",
+    "family": "google",
+    "pass": 41.1,
+    "repair": 90.5,
+    "feature": 29.2,
+    "app": 29.9,
+    "turns": 69.6,
+    "cost": 0.84,
+    "tokens": 4.14,
+    "align": 3.48,
+    "visual": 3.87,
+    "anchor": 4.37,
+    "scale": 4.23,
+    "input": 3.6,
+    "physics": 3.44,
+    "feedback": 3.54,
+    "error": 3.9,
+    "context": 4.02,
+    "clutter": 4.44,
+    "design": 3.89,
+    "color": "#778eb7"
+  },
+  {
+    "id": "deepseek-v4-pro-0813-xhigh",
+    "model": "deepseek-v4-pro-0813",
+    "effort": "xhigh",
+    "family": "deepseek",
+    "pass": 39.3,
+    "repair": 85.7,
+    "feature": 12.5,
+    "app": 34.3,
+    "turns": 90.5,
+    "cost": 0.63,
+    "tokens": 8.77,
+    "align": 3,
+    "visual": 3.48,
+    "anchor": 3.87,
+    "scale": 3.96,
+    "input": 3.13,
+    "physics": 3.09,
+    "feedback": 3.17,
+    "error": 3.74,
+    "context": 3.57,
+    "clutter": 4.35,
+    "design": 3.53,
+    "color": "#927aa7"
+  },
+  {
+    "id": "deepseek-v4.1-flash-xhigh",
+    "model": "deepseek-v4.1-flash",
+    "effort": "xhigh",
+    "family": "deepseek",
+    "pass": 40.2,
+    "repair": 95.2,
+    "feature": 20.8,
+    "app": 29.9,
+    "turns": 114.9,
+    "cost": 0.71,
+    "tokens": 14.77,
+    "align": 3.5,
+    "visual": 3.86,
+    "anchor": 4.14,
+    "scale": 4.11,
+    "input": 3.53,
+    "physics": 3.39,
+    "feedback": 3.61,
+    "error": 3.83,
+    "context": 3.81,
+    "clutter": 4.36,
+    "design": 3.81,
+    "color": "#927aa7"
+  },
+  {
+    "id": "gemini-3.6-flash-high",
+    "model": "gemini-3.6-flash",
+    "effort": "high",
+    "family": "google",
+    "pass": 31.2,
+    "repair": 85.7,
+    "feature": 20.8,
+    "app": 17.9,
+    "turns": 58.7,
+    "cost": 0.67,
+    "tokens": 3.08,
+    "align": 2.64,
+    "visual": 3.39,
+    "anchor": 4,
+    "scale": 3.88,
+    "input": 2.7,
+    "physics": 2.79,
+    "feedback": 2.7,
+    "error": 3.39,
+    "context": 3.42,
+    "clutter": 4.24,
+    "design": 3.32,
+    "color": "#778eb7"
+  },
+  {
+    "id": "gpt-5.6-luna-xhigh",
+    "model": "gpt-5.6-luna",
+    "effort": "xhigh",
+    "family": "openai",
+    "pass": 30.4,
+    "repair": 85.7,
+    "feature": 16.7,
+    "app": 17.9,
+    "turns": 33.8,
+    "cost": 0.36,
+    "tokens": 2.22,
+    "align": 3.15,
+    "visual": 3.38,
+    "anchor": 3.92,
+    "scale": 3.54,
+    "input": 3.31,
+    "physics": 3.15,
+    "feedback": 3.23,
+    "error": 3.58,
+    "context": 3.31,
+    "clutter": 4.27,
+    "design": 3.48,
+    "color": "#37866e"
+  },
+  {
+    "id": "gemini-3.5-flash-high",
+    "model": "gemini-3.5-flash",
+    "effort": "high",
+    "family": "google",
+    "pass": 29.5,
+    "repair": 85.7,
+    "feature": 12.5,
+    "app": 17.9,
+    "turns": 51.2,
+    "cost": 0.95,
+    "tokens": 1.81,
+    "align": 3.06,
+    "visual": 3.61,
+    "anchor": 4.06,
+    "scale": 4.06,
+    "input": 3.17,
+    "physics": 3.28,
+    "feedback": 3.11,
+    "error": 3.67,
+    "context": 3.5,
+    "clutter": 4.33,
+    "design": 3.58,
+    "color": "#778eb7"
+  },
+  {
+    "id": "gemini-3.1-pro-preview-high",
+    "model": "gemini-3.1-pro-preview",
+    "effort": "high",
+    "family": "google",
+    "pass": 23.2,
+    "repair": 81,
+    "feature": 12.5,
+    "app": 9,
+    "turns": 37.5,
+    "cost": 0.64,
+    "tokens": 0.67,
+    "align": 1.65,
+    "visual": 2.23,
+    "anchor": 3.12,
+    "scale": 2.83,
+    "input": 1.93,
+    "physics": 1.65,
+    "feedback": 1.82,
+    "error": 2.55,
+    "context": 2.35,
+    "clutter": 3.52,
+    "design": 2.37,
+    "color": "#778eb7"
+  }
+];
+
+export const staticTasks = [
+  {
+    "id": "hand-fire",
+    "title": "Hand Fire",
+    "tagline": "Two-hand elemental gesture toy with merging flame orbs",
+    "description": "Blue and orange flames track each palm, pinch to concentrate into streams, and merge into a dual-color fire orb when brought together.",
+    "experience": "The user raises hands to kindle separate blue and orange palm flames, pinches to direct concentrated flame streams, and holds them together for one second to forge a merged fire orb.",
+    "outputs": [
+      {
+        "model": "Gemini 3.8 Flash",
+        "modelId": "gemini-3-8",
+        "family": "google",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Renders independent palm fire emitters, transitions smoothly to fingertip streams upon pinching, and cleanly binds the 5-second fire orb.",
+        "url": "apps/hand-fire/gemini-3-8/index.html"
+      },
+      {
+        "model": "Claude Opus 5",
+        "modelId": "opus-5",
+        "family": "anthropic",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Flawlessly tracks hand distance thresholds, animates volumetric flame particles, and restores initial palm state when unpinched.",
+        "url": "apps/hand-fire/opus-5/index.html"
+      },
+      {
+        "model": "GPT 5.6 Sol",
+        "modelId": "sol-5-6",
+        "family": "openai",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Pinched flame streams ignite correctly and merging both hands cleanly forms the central fire orb.",
+        "url": "apps/hand-fire/sol-5-6/index.html"
+      },
+      {
+        "model": "DeepSeek v4.1 Flash",
+        "modelId": "deepseek-v4-1",
+        "family": "deepseek",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Accurately animates billboard glow sprites with responsive pinch detection, hold timers, and success ring accents.",
+        "url": "apps/hand-fire/deepseek-v4-1/index.html"
+      }
+    ],
+    "instructions_markdown": "## Description\n\nHand Fire is a two-hand visual-effects toy with a different colored flame above each palm. The left hand carries a blue flame, and the right hand carries an orange flame. Pinching one hand concentrates only its matching flame into a bright fingertip stream. Bringing both streams together creates a temporary fire orb that holds briefly between the hands. Releasing either pinch returns that hand's flame to its open-palm form.\n\n## User experience\n\n- The app opens with a blue flame above the tracked left palm and an orange flame above the tracked right palm in a clear reach volume.\n- Pinching either hand concentrates only that hand's flame into a bright stream at its fingertips. The other hand's flame keeps its current form.\n- Holding both pinched streams together continuously for one second merges them into one visible fire orb with a success ring.\n- Keep the orb for five seconds. Opening both hands after the orb appears clears it and restores both palm flames.\n- Cancel the one-second merge if either stream separates. Keep the remaining visible flame in its current form."
+  },
+  {
+    "id": "room-scale-cell-explorer",
+    "title": "Room Scale Cell Explorer",
+    "tagline": "Room-scale biology lesson with interactive 3D organelles",
+    "description": "Transform the entire physical room into an animal cell, placing stylized 3D organelles throughout the room with interactive inspection cards.",
+    "experience": "The user walks through a room-sized animal cell. Pointing at organelles (nucleus, mitochondria, Golgi apparatus, ER) opens contextual information cards.",
+    "instructions_markdown": "## Description\n\nRoom-Scale Cell Explorer transforms the user's room into a walkable animal-cell lesson. A translucent membrane surrounds the space while the center remains clear for comfortable exploration. Six major organelles appear as distinct, labeled structures that the learner can inspect. Selecting an organelle opens readable information about it. An optional protein-production journey links several organelles into one visible biological process.\n\n## User experience\n\n- The room boundary appears as a translucent membrane, the open space is tinted as cytoplasm, and a clear walking area remains available.\n- The app presents the nucleus, rough endoplasmic reticulum, Golgi apparatus, mitochondria, lysosome, and ribosomes with preset forms and name markers. A wrist panel provides Overview, Protein Journey, Reset, and six-organelle progress.\n- Pointing at and selecting an organelle highlights it and opens readable information about that organelle.\n- Keep exactly one organelle information display open. Selecting a new organelle removes the previous display before showing the new information.\n- Protein Journey visibly moves messenger RNA from the nucleus to a ribosome, peptide through rough endoplasmic reticulum, and a vesicle through Golgi to release cargo through the membrane.\n- Keep the completed labeled route visible. Reset restores organelles and process objects without changing the mapped room.",
+    "outputs": [
+      {
+        "model": "Gemini 3.8 Flash",
+        "modelId": "gemini-3-8",
+        "family": "google",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Populated the room volume with styled organelle meshes, distinct inspection cards, and responsive hand-ray triggers.",
+        "url": "apps/room-scale-cell-explorer/gemini-3-8/index.html"
+      },
+      {
+        "model": "Claude Opus 5",
+        "modelId": "opus-5",
+        "family": "anthropic",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Successfully anchored 3D organelles with clean visual labels and replaced previous info cards upon selecting new organelles.",
+        "url": "apps/room-scale-cell-explorer/opus-5/index.html"
+      },
+      {
+        "model": "GPT 5.6 Sol",
+        "modelId": "sol-5-6",
+        "family": "openai",
+        "status": "fail",
+        "score": 0,
+        "reason": "Failed interaction ray aim. Organelle colliders and info panels were positioned at angles that blocked automated hand-ray raycasting.",
+        "url": "apps/room-scale-cell-explorer/sol-5-6/index.html"
+      },
+      {
+        "model": "DeepSeek v4.1 Flash",
+        "modelId": "deepseek-v4-1",
+        "family": "deepseek",
+        "status": "fail",
+        "score": 0,
+        "reason": "Failed asset generation. The app rendered an empty room with no organelles, cell membrane, or inspection cards present.",
+        "url": "apps/room-scale-cell-explorer/deepseek-v4-1/index.html"
+      }
+    ]
+  },
+  {
+    "id": "fruit-slicer",
+    "title": "Fruit Slicer",
+    "tagline": "Hand-slicing arcade action with fruits, bombs, and life tracking",
+    "description": "Start a 12-target arcade round where fruits and bombs launch into reachable arcs. Slice fruits with fast hand chops while avoiding bombs.",
+    "experience": "The user presses Play Game to launch targets into reachable arcs. Fast hand chops slice fruits into halves and increment the score. Striking a bomb deducts one of three lives.",
+    "instructions_markdown": "## Description\n\nFruit Slicer is a hand-slicing arcade game with a short twelve-target round. The user selects Play Game, then turns and cuts fruit that pops into reachable arcs from varied positions around the play area. Quick hand motions split fruit, while three bombs require the user to control each swing. Split effects, score, lives, and a resolved counter make every outcome visible. Resolving all targets or losing all lives produces a clear final result with the user's score.\n\n## User experience\n\n- The app opens with a visible Play Game button, three life markers, a `0 of 12 resolved` counter, and no active targets.\n- Selecting Play Game starts the seeded twelve-target round and promptly launches the first target. Fruit and bombs pop into reachable arcs from varied positions all around the user, and the round includes exactly three bombs.\n- A sufficiently fast hand crossing splits a fruit into short-lived halves, increases score, and advances the resolved counter. After the first fruit resolves, display `1 of 12 resolved`.\n- Crossing a bomb empties one life marker, adds no score, and visibly resolves the bomb.\n- After the twelfth target resolves, stop spawning and show the final score with a win or loss state.\n- Touching play again clears old targets and restarts the same seeded round with three lives and zero resolved targets.\n- Keep each active target within a safe hand reach after the user turns toward it.",
+    "outputs": [
+      {
+        "model": "Gemini 3.8 Flash",
+        "modelId": "gemini-3-8",
+        "family": "google",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Cleanly spawned fruits and bombs into reachable arcs, responded to fast hand chops with sliced mesh halves, and tracked lives and round progress accurately.",
+        "url": "apps/fruit-slicer/gemini-3-8/index.html"
+      },
+      {
+        "model": "Claude Opus 5",
+        "modelId": "opus-5",
+        "family": "anthropic",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Hand-slicing mechanics and round completion verified.",
+        "url": "apps/fruit-slicer/opus-5/index.html"
+      },
+      {
+        "model": "GPT 5.6 Sol",
+        "modelId": "sol-5-6",
+        "family": "openai",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Successfully handled rapid hand chop physics, split fruit animations, life counters, and game resolution.",
+        "url": "apps/fruit-slicer/sol-5-6/index.html"
+      },
+      {
+        "model": "DeepSeek v4.1 Flash",
+        "modelId": "deepseek-v4-1",
+        "family": "deepseek",
+        "status": "fail",
+        "score": 0,
+        "reason": "Failed bomb sequence generation. The app failed to spawn bombs within 30 seconds of starting the round, failing required test gates.",
+        "url": "apps/fruit-slicer/deepseek-v4-1/index.html"
+      }
+    ]
+  },
+  {
+    "id": "dolphin-glide",
+    "title": "Dolphin Glide",
+    "tagline": "Swimming flight mechanics with head pitch steering",
+    "description": "Steer an aquatic dolphin along a track using head pitch, propel forward through space with two-handed swimming strokes, and display a stroke counter HUD.",
+    "experience": "The user glides through an underwater course. Tilting the head changes diving pitch, while synchronized two-handed swimming strokes generate propulsion.",
+    "instructions_markdown": "## Description\n\nDolphin Glide is a rhythmic movement game set on a short underwater course. It uses a playful goal to encourage coordinated upper-body movement and repeatable two-hand strokes. The user guides a dolphin through six wide gates with paired hand motion and gentle changes in head angle. A stroke counter and gate display make progress easy to follow while reporting only actions completed during play. Passing all six gates ends the course and shows the final counts without assessing physical condition or recovery.\n\n## User experience\n\n- A dolphin, six wide gates, a `0 strokes` counter, and a clear End control are visible in an underwater course.\n- The user reaches both hands forward and pulls them back together.\n- The dolphin advances one speed step, the stroke counter shows `1 stroke` after the first completed stroke, and head pitch adjusts its vertical direction. A visible direction marker points up or down to match the current head pitch.\n- When the dolphin passes all six gates, the course stops and shows the completed gate and stroke counts.\n- The user can select replay on the completed course; six gates and a zero stroke count return with motion stopped.",
+    "outputs": [
+      {
+        "model": "Gemini 3.8 Flash",
+        "modelId": "gemini-3-8",
+        "family": "google",
+        "status": "fail",
+        "score": 0,
+        "reason": "Failed negative gesture check. A single-handed wave erroneously registered as a paired swimming stroke, violating the two-handed stroke constraint.",
+        "url": "apps/dolphin-glide/gemini-3-8/index.html"
+      },
+      {
+        "model": "Claude Opus 5",
+        "modelId": "opus-5",
+        "family": "anthropic",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria as the sole winner. Accurately implemented dual-hand stroke detection, velocity damping, head pitch steering, and stroke count HUD.",
+        "url": "apps/dolphin-glide/opus-5/index.html"
+      },
+      {
+        "model": "GPT 5.6 Sol",
+        "modelId": "sol-5-6",
+        "family": "openai",
+        "status": "fail",
+        "score": 0,
+        "reason": "Failed propulsion simulation. The dolphin remained completely frozen at the start line regardless of swimming gestures, keeping velocity at zero.",
+        "url": "apps/dolphin-glide/sol-5-6/index.html"
+      },
+      {
+        "model": "DeepSeek v4.1 Flash",
+        "modelId": "deepseek-v4-1",
+        "family": "deepseek",
+        "status": "fail",
+        "score": 0,
+        "reason": "Failed HUD interface. The app omitted the required stroke counter HUD readout, making progress verification impossible.",
+        "url": "apps/dolphin-glide/deepseek-v4-1/index.html"
+      }
+    ]
+  },
+  {
+    "id": "spatial-equation-grapher",
+    "title": "Spatial Equation Grapher",
+    "tagline": "3D mathematical surface visualization with interactive parameter steppers",
+    "description": "Render 3D mathematical surfaces inside a bounded volume with zero-plane grids and UI controls for equation presets and coefficients.",
+    "experience": "The user views a spatial 3D surface plot. Pressing UI buttons switches between Wave, Saddle, and Ripple equations, while stepper buttons adjust coefficients in real time.",
+    "instructions_markdown": "## Description\n\nSpatial Equation Grapher lets the learner compare three preset equations as\nthree-dimensional surfaces. A labeled graph volume keeps the grid, scale, and\nzero plane visible. Each preset has only two configurable parameters, `a` and\n`b`, so the learner can see how one value changes the active surface.\n\n## User experience\n\n- The app presents a reachable three-axis graph volume with a grid, labels, and\n  a zero plane.\n- Three visible preset controls select these exact equations:\n  - Wave: `z = a sin(x) + b cos(y)`\n  - Saddle: `z = a x\u00b2 - b y\u00b2`\n  - Ripple: `z = a sin(b \u221a(x\u00b2 + y\u00b2))`\n- Wave is selected at startup. Selecting a preset immediately replaces the\n  surface and clearly displays its name and equation.\n- Every preset owns an `a` value and a `b` value. Both start at `1.0`, use a\n  range from `-3.0` to `3.0`, and change in `0.5` steps through visible minus\n  and plus controls.\n- A parameter change immediately resamples the active equation over `x` and\n  `y` from `-5` to `5`. The displayed value and surface update together.\n- Each preset retains its own `a` and `b` values while the app remains open.",
+    "outputs": [
+      {
+        "model": "Gemini 3.8 Flash",
+        "modelId": "gemini-3-8",
+        "family": "google",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria (Judge: 5.0 / 5.0). Rendered clean 3D coordinate volume, labeled axes, dynamic surface resampling, and responsive parameter steppers.",
+        "url": "apps/spatial-equation-grapher/gemini-3-8/index.html"
+      },
+      {
+        "model": "Claude Opus 5",
+        "modelId": "opus-5",
+        "family": "anthropic",
+        "status": "fail",
+        "score": 0,
+        "reason": "Failed UI button interaction as the sole loser. Rendered the UI controls visually, but failed to connect raycast interaction handlers to preset buttons.",
+        "url": "apps/spatial-equation-grapher/opus-5/index.html"
+      },
+      {
+        "model": "GPT 5.6 Sol",
+        "modelId": "sol-5-6",
+        "family": "openai",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria (Judge: 5.0 / 5.0). Flawlessly updated surface geometry, formulas, and presets on button clicks.",
+        "url": "apps/spatial-equation-grapher/sol-5-6/index.html"
+      },
+      {
+        "model": "DeepSeek v4.1 Flash",
+        "modelId": "deepseek-v4-1",
+        "family": "deepseek",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria (Judge: 4.9 / 5.0). Accurately switched presets, displayed equations, and updated surface height fields.",
+        "url": "apps/spatial-equation-grapher/deepseek-v4-1/index.html"
+      }
+    ]
+  },
+  {
+    "id": "lascaux-torch",
+    "title": "Lascaux Torch",
+    "tagline": "Prehistoric cave art exploration with dynamic illumination",
+    "description": "Pick up a virtual torch and illuminate prehistoric cave art on surrounding walls, dynamically revealing paintings inside the light cone.",
+    "experience": "The user grabs a flaming torch and inspects dark cave walls. Aiming the torch reveals animal drawings and ochre pigments that smoothly fade out when the light moves away.",
+    "instructions_markdown": "## Description\n\nLascaux Torch is a free-form wall exploration inspired by prehistoric cave art. The user carries a virtual torch and aims its beam across prepared areas on nearby walls. Animal outlines, pigment, engravings, and hand stencils appear only inside the moving pool of light. Moving the torch away lets the unlit artwork fade again, encouraging continued exploration rather than collecting discoveries. The experience has no score or final state and continues for as long as the user wants to inspect the walls.\n\n## User experience\n\n- The user selects and aims the virtual torch with the controller ray.\n- The app presents a ray-selectable virtual torch and prepared prehistoric artwork across one or more nearby walls.\n- Outside the torch beam, selected wall surfaces remain visually quiet.\n- Aiming the torch at a prepared wall region reveals animal outlines with a soft edge that follows the illuminated area.\n- Moving the beam across a painting reveals pigment, engraving, and hand-stencil details only inside the light. Moving away fades every unlit layer instead of retaining discoveries.\n- The exploration continues across other walls without a discovery count, terminal completion state, replay, or reset.",
+    "outputs": [
+      {
+        "model": "Gemini 3.8 Flash",
+        "modelId": "gemini-3-8",
+        "family": "google",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Torch light dynamically revealed cave artwork with smooth radial attenuation and responsive torch pickup.",
+        "url": "apps/lascaux-torch/gemini-3-8/index.html"
+      },
+      {
+        "model": "Claude Opus 5",
+        "modelId": "opus-5",
+        "family": "anthropic",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Cleanly attached the torch to the hand and revealed wall paintings within the illuminated spotlight cone.",
+        "url": "apps/lascaux-torch/opus-5/index.html"
+      },
+      {
+        "model": "GPT 5.6 Sol",
+        "modelId": "sol-5-6",
+        "family": "openai",
+        "status": "fail",
+        "score": 0,
+        "reason": "Failed initialization as the sole loser. The app entered an infinite loop or locked imports during startup, causing the XR runtime to time out.",
+        "url": "apps/lascaux-torch/sol-5-6/index.html"
+      },
+      {
+        "model": "DeepSeek v4.1 Flash",
+        "modelId": "deepseek-v4-1",
+        "family": "deepseek",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Accurately projected spotlight illumination onto artwork textures without state errors.",
+        "url": "apps/lascaux-torch/deepseek-v4-1/index.html"
+      }
+    ]
+  },
+  {
+    "id": "walking-clearance-visualization",
+    "title": "Walking Clearance Visualization",
+    "tagline": "Floor obstacle detection and spatial pathway clearance overlay",
+    "description": "Project a walking clearance overlay on the floor highlighting accessible pathways, with a slider to adjust clearance margin widths.",
+    "experience": "The user inspects physical room floor space. Green overlays highlight walkable pathways, contrasting exclusion zones surround obstacles, and adjusting a slider expands or contracts the margin.",
+    "instructions_markdown": "## Description\n\nWalking Clearance Visualization is a room-planning tool that highlights floor areas with enough open space for walking. It helps users compare possible paths and understand how a chosen clearance affects the usable floor area. A floating slider lets the user choose a value from 0.3 to 0.8 meters. The overlay updates at once, showing qualifying areas in green and excluded areas with a contrasting boundary near walls or obstacles. Reset returns the tool to its initial clearance, and the result remains a planning aid rather than a safety certification.\n\n## User experience\n\n- The user selects and adjusts the clearance slider with the controller ray.\n- The app presents a floating panel with a clearance slider, numeric label,\n  Reset, and nearby-floor overlay.\n- The default clearance is `0.3 m`. The slider ranges from `0.3 m` to `0.8 m`\n  in `0.1 m` steps. Reset always restores `0.3 m`.\n- Qualifying floor is green. Regions too close to walls or floor obstacles remain visible with a contrasting excluded boundary.\n- Increasing clearance contracts the green region and expands excluded boundaries immediately. Decreasing it restores qualifying floor but never includes obstacle interiors or out-of-bounds regions.\n- Sample the floor on a grid with cells no larger than `0.1 m`. At the selected\n  value, a cell is green only when its horizontal distance from every\n  reconstructed wall and obstacle footprint is greater than or equal to that\n  clearance.\n  Obstacle interiors and closer cells belong to the excluded overlay.\n- Place both overlays no more than `0.02 m` above the reconstructed floor so their\n  relationship to obstacles remains clear.\n- Changes to nearby surfaces update the overlay. The result reports geometric clearance only and does not claim safety, accessibility, or compliance.\n- If ray selection ends unexpectedly, keep the current allowed value and the matching floor overlay.",
+    "outputs": [
+      {
+        "model": "Gemini 3.8 Flash",
+        "modelId": "gemini-3-8",
+        "family": "google",
+        "status": "fail",
+        "score": 0,
+        "reason": "Failed floor overlay rendering. The floor planning overlay was missing from the floor mesh; the required green walkable area was not rendered.",
+        "url": "apps/walking-clearance-visualization/gemini-3-8/index.html"
+      },
+      {
+        "model": "Claude Opus 5",
+        "modelId": "opus-5",
+        "family": "anthropic",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Correctly calculated floor obstacle margins and dynamically updated the walkable floor mesh as the slider moved.",
+        "url": "apps/walking-clearance-visualization/opus-5/index.html"
+      },
+      {
+        "model": "GPT 5.6 Sol",
+        "modelId": "sol-5-6",
+        "family": "openai",
+        "status": "fail",
+        "score": 0,
+        "reason": "Failed clearance slider updates. The floor overlay remained static between 0.3m and 0.8m slider values without expanding or contracting margins.",
+        "url": "apps/walking-clearance-visualization/sol-5-6/index.html"
+      },
+      {
+        "model": "DeepSeek v4.1 Flash",
+        "modelId": "deepseek-v4-1",
+        "family": "deepseek",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Rendered clear green pathway overlays with accurate collision boundaries and interactive clearance sliders.",
+        "url": "apps/walking-clearance-visualization/deepseek-v4-1/index.html"
+      }
+    ]
+  },
+  {
+    "id": "toilet-paper-rain",
+    "title": "Toilet Paper Rain",
+    "tagline": "Room-scale physics simulation of falling paper rolls",
+    "description": "Continuous passive roll shower where toilet paper rolls fall under gravity, collide with room surfaces, bounce, and tumble.",
+    "experience": "The user observes rolls of toilet paper raining from overhead, colliding dynamically with the floor and obstacles, and tumbling naturally before being cleaned up.",
+    "outputs": [
+      {
+        "model": "Gemini 3.8 Flash",
+        "modelId": "gemini-3-8",
+        "family": "google",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Spawns authentic cylinder toilet paper rolls at regular intervals with realistic rigid-body physics, surface collisions, and timely despawning.",
+        "url": "apps/toilet-paper-rain/gemini-3-8/index.html"
+      },
+      {
+        "model": "Claude Opus 5",
+        "modelId": "opus-5",
+        "family": "anthropic",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Smoothly manages physics body lifecycles, surface friction, tumbling dynamics, and bounds without dropping through the floor plane.",
+        "url": "apps/toilet-paper-rain/opus-5/index.html"
+      },
+      {
+        "model": "GPT 5.6 Sol",
+        "modelId": "sol-5-6",
+        "family": "openai",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Stable restitution and physics collision responses across all room obstacles with clean roll geometries and texture mapping.",
+        "url": "apps/toilet-paper-rain/sol-5-6/index.html"
+      },
+      {
+        "model": "DeepSeek v4.1 Flash",
+        "modelId": "deepseek-v4-1",
+        "family": "deepseek",
+        "status": "pass",
+        "score": 1,
+        "reason": "Passed all criteria. Cleanly handles continuous spawning rates, gravity constants, and collision meshes with accurate devtools tagging.",
+        "url": "apps/toilet-paper-rain/deepseek-v4-1/index.html"
+      }
+    ],
+    "instructions_markdown": "## Description\n\nToilet Paper Rain is a passive room-scale graphics scene. Toilet paper rolls continuously appear overhead, fall under gravity, collide with the environment, and disappear shortly after landing.\n\n## User experience\n\n- The roll shower starts automatically when the app loads. It has no start control, counter, score, or hand interaction.\n- Spawn recognizable toilet paper rolls at varied positions above a clear floor area and at a steady interval. Keep the active roll count bounded.\n- Every roll is a dynamic physics body. Gravity pulls it down, and it collides with the detected floor and other room surfaces instead of passing through them.\n- Rolls can bounce, tumble, and roll after contact. They must never pass below the environment floor.\n- Remove each roll shortly after it lands or after a bounded lifetime. Continue spawning new rolls so the passive effect remains active."
+  }
+];
