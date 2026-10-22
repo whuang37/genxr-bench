@@ -22,7 +22,6 @@
 }
 html {
   scroll-behavior: smooth;
-  scroll-padding-top: 28px;
   background: #0c120e;
 }
 body {
@@ -50,43 +49,23 @@ h3 { font-size: 17px; font-weight: 600; }
 .wrap { width: min(1120px, calc(100% - 64px)); margin-inline: auto; }
 .muted, .section-note { color: var(--muted); font-size: 14px; }
 td, .chart { font-variant-numeric: tabular-nums; }
-.hero-wrapper {
-  position: relative;
-  height: 140vh;
-  background: #0c120e;
-}
 .hero {
-  position: sticky;
-  top: 0;
+  position: relative;
   text-align: center;
   padding: 64px 0 88px;
-  height: 100vh;
-  height: 100dvh;
+  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
   background: #0c120e url(assets/banner-poster.webp) center / cover no-repeat;
   color: #fff;
-  transform: translateY(var(--hero-exit-y, 0px));
-  will-change: transform;
-}
-.hero::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  background: linear-gradient(to bottom, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.4) 35%, rgba(255, 255, 255, 0.85) 70%, #ffffff 100%);
-  opacity: var(--hero-light-fade, 0);
-  pointer-events: none;
 }
 .hero-content {
   position: relative;
   z-index: 2;
   flex-shrink: 0;
-  opacity: var(--hero-content-opacity, 1);
-  transform: translateY(var(--hero-translate-y, 0px)) scale(var(--hero-scale, 1));
-  will-change: transform, opacity;
 }
 .hero::after {
   content: '';
@@ -94,7 +73,6 @@ td, .chart { font-variant-numeric: tabular-nums; }
   inset: 0;
   z-index: 1;
   background: linear-gradient(rgba(8, 12, 10, .80), rgba(8, 12, 10, .90));
-  opacity: var(--hero-darkness, 1);
 }
 .hero-motion { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .hero-scroll-indicator {
@@ -112,7 +90,6 @@ td, .chart { font-variant-numeric: tabular-nums; }
   text-decoration: none;
   transition: color 150ms ease, transform 150ms ease;
   animation: hero-bounce 2.2s infinite ease-in-out;
-  opacity: var(--indicator-opacity, 1);
 }
 .hero-scroll-indicator svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .hero-scroll-indicator:hover { color: #ffffff; transform: translateX(-50%) translateY(3px); }
@@ -445,7 +422,6 @@ pre code {
 
 @media (max-width: 760px) {
   .wrap { width: calc(100% - 36px); }
-  .hero-wrapper { height: 135vh; }
   .hero { padding: 56px 0 88px; }
   .section { padding-block: 48px; }
   .section-heading { align-items: start; flex-direction: column; gap: 12px; }
@@ -472,7 +448,4 @@ pre code {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .hero-motion { display: none; }
-  .hero-wrapper { height: auto; }
-  .hero { position: relative; opacity: 1 !important; transform: none !important; height: auto; min-height: max(600px, 100dvh); }
-  .hero-content { opacity: 1 !important; transform: none !important; }
 }

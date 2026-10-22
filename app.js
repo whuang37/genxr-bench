@@ -2,7 +2,7 @@ import { staticResults, staticTasks } from './static-data.js';
 import { readFile } from './data.js';
 import { initResults } from './results.js';
 import { initPlayground } from './playground.js';
-import { initHeroMotion, initHeroScroll, initCarousel } from './media.js';
+import { initHeroMotion, initCarousel } from './media.js';
 
 const $ = selector => document.querySelector(selector);
 
@@ -26,7 +26,6 @@ $('#copy-citation').addEventListener('click', async () => {
   }
 });
 
-initHeroScroll();
 initHeroMotion();
 initCarousel();
 
