@@ -1,35 +1,40 @@
-# GENXR-BENCH
+# GenXR-Bench: Benchmarking Coding Agents for Interactive XR Development
 
-**Benchmarking Coding Agents for Interactive XR Development**
+This work is licensed under a
+[Creative Commons Attribution 4.0 International License](https://creativecommons.org/licenses/by/4.0/deed.en).
 
-<!-- Replace these URLs when the paper and results are available. -->
-[Paper](https://example.com/genxr-bench-paper) ·
-[Results](https://example.com/genxr-bench-results)
+### [[Project Page]](https://whuang37.github.io/genxr-bench) [[arXiv]](https://arxiv.org/abs/2610.29014v1)
 
-## Repository layout
+![Teaser Image](./assets/teaser.png)
 
-- `tasks/`: instructions, Docker environments, verifiers, and SDK reference solutions.
-- `xrblocks/`: Local XR Blocks 0.21.0 with slight modifications for network-limitations.
-- `docker/`: Runtime image files.
-- `scripts/`: Build scripts.
-- `genxr-viewer/`: viewer for local evaluation results.
+## Overview
 
-## Requirements
+GenXR-Bench is a benchmark to analyze the performance of agents on common XR coding tasks fully implemented using the [XR Blocks](https://xrblocks.github.io/) SDK. GenXR-Bench consists of the following:
+- 24 tasks analyzing how well agents are able to **implement core SDK functionality** like occlusion rendering or interactions.
+- 21 tasks analyzing how well agents can **translate interaction-related bugs into concrete code updates**.
+- 67 tasks analyzing how well agents can **generate end-to-end XR experiences** across common application domains. 
 
-- Git.
-- Docker with a running daemon, Buildx, and Compose. Each task requests 4 GB of
-  memory and 10 GB of storage; allow additional space for shared images.
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) and Python 3.12
-  or newer for Harbor 0.18.0.
-- An API key for your agent provider and `GEMINI_API_KEY` for the verifier.
-  All task configurations reference `GEMINI_API_KEY`.
 
 ## Installation
+
+GenXR-Bench is implemented using Harbor. Run this benchmark on a computer with:
+- Docker. Each task requires 4 GB of memory and 10 GB of storage during runtime
+- Python. We recommend installation through [uv](https://docs.astral.sh/uv/getting-started/installation/).
+- An API key for your agent provider and `GEMINI_API_KEY` for the verifier. Get a key [here](https://aistudio.google.com/app/api-keys)
+- [Harbor](https://docs.harborframework.com/getting-started/quick-start) evaluation framework.
+
+We outline setup using [uv](https://docs.astral.sh/uv/getting-started/installation/) below:
+
+1. Clone the repository
 
 ```bash
 git clone https://github.com/xrblocks/genxr-bench.git
 cd genxr-bench
+```
 
+2. Setup all tools
+
+```bash
 uv python install 3.12
 uv tool install --python 3.12 harbor==0.18.0
 
@@ -37,20 +42,40 @@ docker info
 docker buildx version
 docker compose version
 harbor --version
+```
 
+3. Build the docker images
+
+```bash
 ./scripts/build-local-images.sh ./xrblocks
 ```
 
-The build downloads SDK assets and installs the pinned DevTools revision. It
+The build downloads SDK assets and sets up XR Blocks for a fully local runtime.. It
 creates `genxr-runtime:local` and `genxr-runtime-app:local`. See
 [Docker setup](docker/README.md) for details.
 
 ## Run the benchmark
 
+The full benchmark:
 ```bash
-export OPENAI_API_KEY="<your-agent-api-key>"
+export MODEL_KEY="<your-agent-api-key>"
 export GEMINI_API_KEY="<your-gemini-api-key>"
-export MODEL_ID="openai/your-model-id"
+export MODEL_ID="your-model-id"
+
+harbor run \
+  --path tasks/ \
+  --agent mini-swe-agent \
+  --model "$MODEL_ID" \
+  --verifier-env "GEMINI_API_KEY=$GEMINI_API_KEY" \
+  --jobs-dir jobs
+```
+
+
+A singular task:
+```bash
+export MODEL_KEY="<your-agent-api-key>"
+export GEMINI_API_KEY="<your-gemini-api-key>"
+export MODEL_ID="your-model-id"
 
 harbor run \
   --path tasks/blowing-dandelion \
@@ -60,18 +85,9 @@ harbor run \
   --jobs-dir jobs
 ```
 
-For the full benchmark, change `--path` to `tasks` and add `--n-concurrent n`.
-Start with one trial at a time because browser tests use substantial resources.
-For other agents and credentials, see the
-[Harbor agent guide](https://docs.harborframework.com/agents/pre-integrated-agents).
-
-Harbor saves results, logs, and artifacts under `jobs/`. Task verifiers write
-`reward.json`; app tasks also save a video judge result when available. 
-
 ## View results
 
-The optional viewer requires Node.js 24 and npm on the host. From the repository
-root:
+We provide an optional viewer to easily look at generated applications. using Node.js 24 and npm. run:
 
 ```bash
 cd genxr-viewer
@@ -80,7 +96,25 @@ npm run import-job -- ../jobs/<job-id> --import-artifacts
 npm run dev
 ```
 
-Replace `<job-id>` with a completed job directory. Open the local URL printed
-by Vite, normally `http://localhost:5173`. See the
-[viewer README](genxr-viewer/README.md) for build and deployment instructions.
-Evaluation output and imported jobs are excluded from version control.
+Replace `<job-id>` with a completed job directory. 
+
+## Citing
+
+If extending or using our work, please cite the following:
+
+```
+@misc{huangGenXRBenchBenchmarkingCoding2026,
+  title = {{{GenXR-Bench}}: {{Benchmarking Coding Agents}} for {{Interactive XR Development}}},
+  shorttitle = {{{GenXR-Bench}}},
+  author = {Huang, William and Li, David and Chen, Xiang 'Anthony' and Qian, Xun and Numan, Nels and Zhou, Zhongyi and Cho, Hyunsung and Chishti, Salman Muin Kayser and Xia, Ding and Huang, Xincheng and Ren, Jiahao and Faruqi, Faraz and Xu, Tianyu and Zhang, Yang and Kim, David and Du, Ruofei},
+  year = 2026,
+  month = oct,
+  number = {arXiv:2610.29014},
+  eprint = {2610.29014},
+  primaryclass = {cs.AI},
+  publisher = {arXiv},
+  doi = {10.48550/arXiv.2610.29014},
+  urldate = {2026-10-22},
+  archiveprefix = {arXiv}
+}
+```
