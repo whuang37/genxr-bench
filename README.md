@@ -5,7 +5,9 @@ This work is licensed under a
 
 ### [[Project Page]](https://whuang37.github.io/genxr-bench) [[arXiv]](https://arxiv.org/abs/2610.29014v1)
 
-![Teaser Image](./assets/teaser.gif)
+<p align="center">
+  <img src="./assets/teaser.gif" alt="Teaser Image">
+</p>
 
 ## Overview
 
