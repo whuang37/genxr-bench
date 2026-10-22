@@ -356,6 +356,20 @@ pre code {
   white-space: pre-wrap;
   word-break: break-word;
 }
+#bibtex {
+  display: block;
+  white-space: normal;
+}
+#bibtex > span {
+  display: block;
+  padding-left: 4ch;
+  text-indent: -4ch;
+  white-space: pre-wrap;
+}
+#bibtex > .bibtex-authors {
+  padding-left: 14ch;
+  text-indent: -14ch;
+}
 .site-footer {
   width: 100%;
   border-top: 1px solid var(--line);
