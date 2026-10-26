@@ -3,7 +3,7 @@
 This work is licensed under a
 [Creative Commons Attribution 4.0 International License](https://creativecommons.org/licenses/by/4.0/deed.en).
 
-### [[Project Page]](https://whuang37.github.io/genxr-bench) [[arXiv]](https://arxiv.org/abs/2610.29014v2)
+### [[Project Page]](https://whuang37.github.io/genxr-bench) [[arXiv]](https://arxiv.org/abs/2610.29014)
 
 <p align="center">
   <img src="./assets/teaser.gif" alt="Teaser Image">
